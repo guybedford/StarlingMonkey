@@ -36,13 +36,19 @@ include("openssl")
 include("host_api")
 include("build-crates")
 
+<<<<<<< HEAD
 add_library(extension_api INTERFACE include/extension-api.h runtime/encode.h)
 target_link_libraries(extension_api INTERFACE rust-url spidermonkey)
+=======
+add_library(extension_api INTERFACE include/extension-api.h runtime/encode.h runtime/decode.h)
+target_link_libraries(extension_api INTERFACE rust-url spidermonkey)
+>>>>>>> fetch-rework
 target_include_directories(extension_api INTERFACE include deps/include runtime)
 
 include("builtins")
 
-if (DEFINED ENV{WPT})
+option(ENABLE_WPT "Enable WPT harness support" OFF)
+if (ENABLE_WPT)
     include("tests/wpt-harness/wpt.cmake")
 endif()
 
@@ -50,6 +56,7 @@ add_executable(starling.wasm
         runtime/js.cpp
         runtime/allocator.cpp
         runtime/encode.cpp
+        runtime/decode.cpp
         runtime/engine.cpp
         runtime/event_loop.cpp
         runtime/builtin.cpp
@@ -102,5 +109,6 @@ function(componentize OUTPUT)
 endfunction()
 
 componentize(smoke-test SOURCES tests/cases/smoke/smoke.js)
+componentize(runtime-eval)
 
 include("tests/tests.cmake")

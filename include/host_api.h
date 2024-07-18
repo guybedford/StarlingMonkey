@@ -356,9 +356,9 @@ public:
     return nullptr;
   };
 
-  Result<vector<tuple<HostString, HostString>>> entries() const;
+  Result<vector<tuple<HostString, std::span<uint8_t>>>> entries() const;
   Result<vector<HostString>> names() const;
-  Result<optional<vector<HostString>>> get(string_view name) const;
+  Result<optional<std::span<uint8_t>>> get(string_view name) const;
   Result<bool> has(string_view name) const;
 };
 
@@ -385,9 +385,13 @@ public:
     return this;
   };
 
-  Result<Void> set(string_view name, string_view value);
-  Result<Void> append(string_view name, string_view value);
+  Result<Void> set(string_view name, std::span<uint8_t> value);
+  Result<Void> append(string_view name, std::span<uint8_t> value);
   Result<Void> remove(string_view name);
+
+  HttpHeadersGuard guard() {
+    return guard_;
+  };
 
   static bool check_guard(HttpHeadersGuard guard, string_view header_name);
 };

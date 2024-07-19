@@ -59,9 +59,17 @@ public:
     Uninitialized, // Headers have not been initialized.
   };
 
+  // Headers internal data structure is a list of key-value pairs, ready to go as owned host strings.
+  using HeadersList = std::vector<std::tuple<host_api::HostString, host_api::HostString>>;
+  // A sort list is maintained of ordered indicies of the the sorted lowercase keys of main headers
+  // list, with each index of HeadersList always being present in this list once and only once. When
+  // this list is empty, that means the sort list is not valid and needs to be computed.
+  using HeadersSortList = std::vector<size_t>;
+
   enum class Slots {
     Handle,
-    Entries, // Map holding headers if they are available in-content.
+    HeadersList,
+    HeadersSortList,
     Mode,
     Guard,
     Count,
@@ -117,7 +125,7 @@ public:
   ///
   /// Depending on the `Mode` the instance is in, this can be a cache or the canonical store for
   /// the headers.
-  static JSObject* get_entries(JSContext *cx, HandleObject self);
+  static HeadersList* get_entries(JSContext *cx, HandleObject self);
 
   /**
    * Returns a cloned handle representing the contents of this Headers object.

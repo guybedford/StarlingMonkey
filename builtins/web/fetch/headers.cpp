@@ -1,6 +1,6 @@
 #include "headers.h"
-#include "encode.h"
 #include "decode.h"
+#include "encode.h"
 #include "fetch-errors.h"
 #include "sequence.hpp"
 
@@ -68,7 +68,7 @@ host_api::HttpHeadersReadOnly *get_handle(JSObject *self) {
  * https://searchfox.org/mozilla-central/rev/9f76a47f4aa935b49754c5608a1c8e72ee358c46/netwerk/protocol/http/nsHttp.cpp#172-215
  * For details on validation.
  */
-host_api::HostString normalize_header_name(JSContext *cx, HandleValue name_val, bool* named_changed,
+host_api::HostString normalize_header_name(JSContext *cx, HandleValue name_val, bool *named_changed,
                                            const char *fun_name) {
   *named_changed = !name_val.isString();
   JS::RootedString name_str(cx, JS::ToString(cx, name_val));
@@ -113,7 +113,7 @@ host_api::HostString normalize_header_name(JSContext *cx, HandleValue name_val, 
  * For details on validation.
  */
 host_api::HostString normalize_header_value(JSContext *cx, HandleValue value_val,
-                                            bool* value_changed, const char *fun_name) {
+                                            bool *value_changed, const char *fun_name) {
   *value_changed = !value_val.isString();
   JS::RootedString value_str(cx, JS::ToString(cx, value_val));
   if (!value_str) {
@@ -260,8 +260,8 @@ std::vector<std::string_view> splitCookiesString(std::string_view cookiesString)
 
 } // namespace
 
-bool redecode_str_if_changed(JSContext* cx, HandleValue str_val, string_view chars,
-                             bool changed, MutableHandleValue rval) {
+bool redecode_str_if_changed(JSContext *cx, HandleValue str_val, string_view chars, bool changed,
+                             MutableHandleValue rval) {
   if (!changed) {
     rval.set(str_val);
     return true;
@@ -276,7 +276,7 @@ bool redecode_str_if_changed(JSContext* cx, HandleValue str_val, string_view cha
   return true;
 }
 
-static bool switch_mode(JSContext* cx, HandleObject self, const Headers::Mode mode) {
+static bool switch_mode(JSContext *cx, HandleObject self, const Headers::Mode mode) {
   auto current_mode = Headers::mode(self);
   if (mode == current_mode) {
     return true;
@@ -288,7 +288,7 @@ static bool switch_mode(JSContext* cx, HandleObject self, const Headers::Mode mo
     if (!map) {
       return false;
     }
-    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Entries), ObjectValue(*map));
+    // SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Entries), ObjectValue(*map));
     SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Mode), JS::Int32Value(static_cast<int32_t>(mode)));
     return true;
   }
@@ -296,57 +296,10 @@ static bool switch_mode(JSContext* cx, HandleObject self, const Headers::Mode mo
   if (current_mode == Headers::Mode::ContentOnly) {
     MOZ_ASSERT(mode == Headers::Mode::CachedInContent,
                "Switching from ContentOnly to HostOnly is wasteful and not implemented");
-    RootedObject entries(cx, Headers::get_entries(cx, self));
-    MOZ_ASSERT(entries);
-    RootedValue iterable(cx);
-    if (!MapEntries(cx, entries, &iterable)) {
-      return false;
-    }
+    Headers::HeadersList *list = Headers::get_entries(cx, self);
+    MOZ_ASSERT(list);
 
-    JS::ForOfIterator it(cx);
-    if (!it.init(iterable)) {
-      return false;
-    }
-
-    using host_api::HostString;
-    vector<tuple<HostString, HostString>> string_entries;
-
-    RootedValue entry_val(cx);
-    RootedObject entry(cx);
-    RootedValue name_val(cx);
-    RootedString name_str(cx);
-    RootedValue value_val(cx);
-    RootedString value_str(cx);
-    while (true) {
-      bool done;
-      if (!it.next(&entry_val, &done)) {
-        return false;
-      }
-
-      if (done) {
-        break;
-      }
-
-      entry = &entry_val.toObject();
-      JS_GetElement(cx, entry, 0, &name_val);
-      JS_GetElement(cx, entry, 1, &value_val);
-      name_str = name_val.toString();
-      value_str = value_val.toString();
-
-      auto name = core::encode(cx, name_str);
-      if (!name.ptr) {
-        return false;
-      }
-
-      auto value = core::encode(cx, value_str);
-      if (!value.ptr) {
-        return false;
-      }
-
-      string_entries.emplace_back(std::move(name), std::move(value));
-    }
-
-    auto handle = host_api::HttpHeaders::FromEntries(Headers::guard(self), string_entries);
+    auto handle = host_api::HttpHeaders::FromEntries(Headers::guard(self), *list);
     if (handle.is_err()) {
       return api::throw_error(cx, FetchErrors::HeadersCloningFailed);
     }
@@ -357,6 +310,9 @@ static bool switch_mode(JSContext* cx, HandleObject self, const Headers::Mode mo
   // Regardless of whether we're switching to CachedInContent or ContentOnly,
   // get all entries into content.
   if (current_mode == Headers::Mode::HostOnly) {
+    auto *list = static_cast<Headers::HeadersList *>(
+        JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
+
     auto handle = get_handle(self);
     MOZ_ASSERT(handle);
     auto res = handle->entries();
@@ -365,32 +321,9 @@ static bool switch_mode(JSContext* cx, HandleObject self, const Headers::Mode mo
       return false;
     }
 
-    RootedObject map(cx, JS::NewMapObject(cx));
-    if (!map) {
-      return false;
-    }
-
-    RootedString key(cx);
-    RootedValue key_val(cx);
-    RootedString value(cx);
-    RootedValue value_val(cx);
     for (auto &entry : std::move(res.unwrap())) {
-      key = core::decode(cx, std::get<0>(entry));
-      if (!key) {
-        return false;
-      }
-      value = core::decode(cx, std::get<1>(entry));
-      if (!value) {
-        return false;
-      }
-      key_val.setString(key);
-      value_val.setString(value);
-      if (!MapSet(cx, map, key_val, value_val)) {
-        return false;
-      }
+      list->emplace_back(std::move(std::get<0>(entry)), std::move(std::get<1>(entry)));
     }
-
-    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Entries), ObjectValue(*map));
   }
 
   if (mode == Headers::Mode::ContentOnly) {
@@ -404,7 +337,7 @@ static bool switch_mode(JSContext* cx, HandleObject self, const Headers::Mode mo
   return true;
 }
 
-bool prepare_for_entries_modification(JSContext* cx, JS::HandleObject self) {
+bool prepare_for_entries_modification(JSContext *cx, JS::HandleObject self) {
   auto mode = Headers::mode(self);
   if (mode == Headers::Mode::HostOnly) {
     auto handle = get_handle(self);
@@ -422,10 +355,10 @@ bool prepare_for_entries_modification(JSContext* cx, JS::HandleObject self) {
   return true;
 }
 
-bool append_single_normalized_header_value(JSContext *cx, HandleObject self,
-  HandleValue name, string_view name_chars, bool name_changed,
-  HandleValue value, string_view value_chars, bool value_changed,
-  const char *fun_name) {
+bool append_single_normalized_header_value(JSContext *cx, HandleObject self, HandleValue name,
+                                           string_view name_chars, bool name_changed,
+                                           HandleValue value, string_view value_chars,
+                                           bool value_changed, const char *fun_name) {
   Headers::Mode mode = Headers::mode(self);
   if (mode == Headers::Mode::HostOnly) {
     auto handle = get_handle(self)->as_writable();
@@ -442,43 +375,44 @@ bool append_single_normalized_header_value(JSContext *cx, HandleObject self,
       return true;
     }
 
-    RootedObject entries(cx, Headers::get_entries(cx, self));
-    if (!entries) {
-      return false;
-    }
+    // TODO(headers)
+    // RootedObject entries(cx, Headers::get_entries(cx, self));
+    // if (!entries) {
+    //   return false;
+    // }
 
-    RootedValue name_val(cx);
-    if (!redecode_str_if_changed(cx, name, name_chars, name_changed, &name_val)) {
-      return false;
-    }
+    // RootedValue name_val(cx);
+    // if (!redecode_str_if_changed(cx, name, name_chars, name_changed, &name_val)) {
+    //   return false;
+    // }
 
-    RootedValue value_val(cx);
-    if (!redecode_str_if_changed(cx, value, value_chars, value_changed, &value_val)) {
-      return false;
-    }
+    // RootedValue value_val(cx);
+    // if (!redecode_str_if_changed(cx, value, value_chars, value_changed, &value_val)) {
+    //   return false;
+    // }
 
-    RootedValue entry(cx);
-    if (!MapGet(cx, entries, name_val, &entry)) {
-      return false;
-    }
+    // RootedValue entry(cx);
+    // if (!MapGet(cx, entries, name_val, &entry)) {
+    //   return false;
+    // }
 
-    if (!entry.isUndefined()) {
-      RootedString entry_str(cx, JS::ToString(cx, entry));
-      entry_str = JS_ConcatStrings(cx, entry_str, comma);
-      if (!entry_str) {
-        return false;
-      }
-      RootedString val_str(cx, value_val.toString());
-      entry_str = JS_ConcatStrings(cx, entry_str, val_str);
-      if (!entry_str) {
-        return false;
-      }
-      value_val.setString(entry_str);
-    }
+    // if (!entry.isUndefined()) {
+    //   RootedString entry_str(cx, JS::ToString(cx, entry));
+    //   entry_str = JS_ConcatStrings(cx, entry_str, comma);
+    //   if (!entry_str) {
+    //     return false;
+    //   }
+    //   RootedString val_str(cx, value_val.toString());
+    //   entry_str = JS_ConcatStrings(cx, entry_str, val_str);
+    //   if (!entry_str) {
+    //     return false;
+    //   }
+    //   value_val.setString(entry_str);
+    // }
 
-    if (!MapSet(cx, entries, name_val, value_val)) {
-      return false;
-    }
+    // if (!MapSet(cx, entries, name_val, value_val)) {
+    //   return false;
+    // }
   }
 
   return true;
@@ -496,14 +430,14 @@ bool Headers::append_header_value(JSContext *cx, JS::HandleObject self, JS::Hand
   std::string_view name_str = name_chars;
   if (name_str == "set-cookie") {
     for (auto value : splitCookiesString(value_chars)) {
-      if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed, UndefinedHandleValue,
-       value, true, fun_name)) {
+      if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed,
+                                                 UndefinedHandleValue, value, true, fun_name)) {
         return false;
       }
     }
   } else {
     if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed, value,
-     value_chars, value_changed, fun_name)) {
+                                               value_chars, value_changed, fun_name)) {
       return false;
     }
   }
@@ -512,7 +446,7 @@ bool Headers::append_header_value(JSContext *cx, JS::HandleObject self, JS::Hand
 }
 
 JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersGuard guard) {
-  JSObject* self = JS_NewObjectWithGivenProto(cx, &class_, proto_obj);
+  JSObject *self = JS_NewObjectWithGivenProto(cx, &class_, proto_obj);
   if (!self) {
     return nullptr;
   }
@@ -521,10 +455,15 @@ JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersGuard guard) {
                   JS::Int32Value(static_cast<int32_t>(guard)));
   SetReservedSlot(self, static_cast<uint32_t>(Slots::Mode),
                   JS::Int32Value(static_cast<int32_t>(Mode::Uninitialized)));
+
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersList), JS::PrivateValue(nullptr));
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersSortList), JS::PrivateValue(nullptr));
+
   return self;
 }
 
-JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersReadOnly *handle, host_api::HttpHeadersGuard guard) {
+JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersReadOnly *handle,
+                          host_api::HttpHeadersGuard guard) {
   RootedObject self(cx, create(cx, guard));
   if (!self) {
     return nullptr;
@@ -537,7 +476,8 @@ JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersReadOnly *handle, 
   return self;
 }
 
-JSObject *Headers::create(JSContext *cx, HandleValue init_headers, host_api::HttpHeadersGuard guard) {
+JSObject *Headers::create(JSContext *cx, HandleValue init_headers,
+                          host_api::HttpHeadersGuard guard) {
   RootedObject self(cx, create(cx, guard));
   if (!self) {
     return nullptr;
@@ -581,18 +521,19 @@ bool Headers::get(JSContext *cx, unsigned argc, JS::Value *vp) {
     return retrieve_value_for_header_from_handle(cx, self, name_chars, args.rval());
   }
 
-  RootedObject entries(cx, get_entries(cx, self));
-  if (!entries) {
-    return false;
-  }
+  // TODO(headers)
+  // RootedObject entries(cx, get_entries(cx, self));
+  // if (!entries) {
+  //   return false;
+  // }
 
-  RootedValue name_val(cx);
-  if (!redecode_str_if_changed(cx, args[0], name_chars, name_changed, &name_val)) {
-    return false;
-  }
-  if (!MapGet(cx, entries, name_val, args.rval())) {
-    return false;
-  }
+  // RootedValue name_val(cx);
+  // if (!redecode_str_if_changed(cx, args[0], name_chars, name_changed, &name_val)) {
+  //   return false;
+  // }
+  // if (!MapGet(cx, entries, name_val, args.rval())) {
+  //   return false;
+  // }
 
   if (args.rval().isUndefined()) {
     args.rval().setNull();
@@ -622,24 +563,25 @@ bool Headers::set(JSContext *cx, unsigned argc, JS::Value *vp) {
     }
   } else {
     MOZ_ASSERT(mode == Mode::ContentOnly);
-    RootedObject entries(cx, get_entries(cx, self));
-    if (!entries) {
-      return false;
-    }
+    // TODO(headers)
+    // RootedObject entries(cx, get_entries(cx, self));
+    // if (!entries) {
+    //   return false;
+    // }
 
-    RootedValue name_val(cx);
-    if (!redecode_str_if_changed(cx, args[0], name_chars, name_changed, &name_val)) {
-      return false;
-    }
+    // RootedValue name_val(cx);
+    // if (!redecode_str_if_changed(cx, args[0], name_chars, name_changed, &name_val)) {
+    //   return false;
+    // }
 
-    RootedValue value_val(cx);
-    if (!redecode_str_if_changed(cx, args[1], value_chars, value_changed, &value_val)) {
-      return false;
-    }
+    // RootedValue value_val(cx);
+    // if (!redecode_str_if_changed(cx, args[1], value_chars, value_changed, &value_val)) {
+    //   return false;
+    // }
 
-    if (!MapSet(cx, entries, name_val, value_val)) {
-      return false;
-    }
+    // if (!MapSet(cx, entries, name_val, value_val)) {
+    //   return false;
+    // }
   }
 
   args.rval().setUndefined();
@@ -664,20 +606,21 @@ bool Headers::has(JSContext *cx, unsigned argc, JS::Value *vp) {
     MOZ_ASSERT(!res.is_err());
     args.rval().setBoolean(res.unwrap());
   } else {
-    RootedObject entries(cx, get_entries(cx, self));
-    if (!entries) {
-      return false;
-    }
+    // TODO(headers)
+    // RootedObject entries(cx, get_entries(cx, self));
+    // if (!entries) {
+    //   return false;
+    // }
 
-    RootedValue name_val(cx);
-    if (!redecode_str_if_changed(cx, args[0], name_chars, name_changed, &name_val)) {
-      return false;
-    }
-    bool has;
-    if (!MapHas(cx, entries, name_val, &has)) {
-      return false;
-    }
-    args.rval().setBoolean(has);
+    // RootedValue name_val(cx);
+    // if (!redecode_str_if_changed(cx, args[0], name_chars, name_changed, &name_val)) {
+    //   return false;
+    // }
+    // bool has;
+    // if (!MapHas(cx, entries, name_val, &has)) {
+    //   return false;
+    // }
+    // args.rval().setBoolean(has);
   }
 
   return true;
@@ -694,7 +637,8 @@ bool Headers::append(JSContext *cx, unsigned argc, JS::Value *vp) {
   return true;
 }
 
-bool Headers::set_if_undefined(JSContext *cx, HandleObject self, string_view name, string_view value) {
+bool Headers::set_if_undefined(JSContext *cx, HandleObject self, string_view name,
+                               string_view value) {
   if (!prepare_for_entries_modification(cx, self)) {
     return false;
   }
@@ -716,28 +660,30 @@ bool Headers::set_if_undefined(JSContext *cx, HandleObject self, string_view nam
   }
 
   MOZ_ASSERT(mode(self) == Mode::ContentOnly);
-  RootedObject entries(cx, get_entries(cx, self));
-  RootedString name_str(cx, core::decode(cx, name));
-  if (!name_str) {
-    return false;
-  }
-  RootedValue name_val(cx, StringValue(name_str));
+  // TODO(headers)
+  // RootedObject entries(cx, get_entries(cx, self));
+  // RootedString name_str(cx, core::decode(cx, name));
+  // if (!name_str) {
+  //   return false;
+  // }
+  // RootedValue name_val(cx, StringValue(name_str));
 
-  bool has;
-  if (!MapHas(cx, entries, name_val, &has)) {
-    return false;
-  }
-  if (has) {
-    return true;
-  }
+  // bool has;
+  // if (!MapHas(cx, entries, name_val, &has)) {
+  //   return false;
+  // }
+  // if (has) {
+  //   return true;
+  // }
 
-  RootedString value_str(cx, core::decode(cx, value));
-  if (!value_str) {
-    return false;
-  }
-  RootedValue value_val(cx, StringValue(value_str));
+  // RootedString value_str(cx, core::decode(cx, value));
+  // if (!value_str) {
+  //   return false;
+  // }
+  // RootedValue value_val(cx, StringValue(value_str));
 
-  return JS::MapSet(cx, entries, name_val, value_val);
+  // return JS::MapSet(cx, entries, name_val, value_val);
+  return true;
 }
 
 bool Headers::delete_(JSContext *cx, unsigned argc, JS::Value *vp) {
@@ -760,79 +706,86 @@ bool Headers::delete_(JSContext *cx, unsigned argc, JS::Value *vp) {
     }
   } else {
     MOZ_ASSERT(mode == Mode::ContentOnly);
-    RootedObject entries(cx, get_entries(cx, self));
-    if (!entries) {
-      return false;
-    }
+    // TODO(headers)
+    // RootedObject entries(cx, get_entries(cx, self));
+    // if (!entries) {
+    //   return false;
+    // }
 
-    RootedValue name_val(cx);
-    if (!redecode_str_if_changed(cx, args[0], name_chars, name_changed, &name_val)) {
-      return false;
-    }
-    bool had;
-    return MapDelete(cx, entries, name_val, &had);
+    // RootedValue name_val(cx);
+    // if (!redecode_str_if_changed(cx, args[0], name_chars, name_changed, &name_val)) {
+    //   return false;
+    // }
+    // bool had;
+    // return MapDelete(cx, entries, name_val, &had);
   }
-
 
   args.rval().setUndefined();
   return true;
 }
 
 bool Headers::forEach(JSContext *cx, unsigned argc, JS::Value *vp) {
-  HEADERS_ITERATION_METHOD(1)
+  // TODO(headers)
+  // HEADERS_ITERATION_METHOD(1)
 
-  if (!args[0].isObject() || !JS::IsCallable(&args[0].toObject())) {
-    return api::throw_error(cx, api::Errors::ForEachCallback, "Headers");
-  }
+  // if (!args[0].isObject() || !JS::IsCallable(&args[0].toObject())) {
+  //   return api::throw_error(cx, api::Errors::ForEachCallback, "Headers");
+  // }
 
-  JS::RootedValueArray<3> newArgs(cx);
-  newArgs[2].setObject(*self);
+  // JS::RootedValueArray<3> newArgs(cx);
+  // newArgs[2].setObject(*self);
 
-  JS::RootedValue rval(cx);
+  // JS::RootedValue rval(cx);
 
-  JS::RootedValue iterable(cx);
-  if (!JS::MapEntries(cx, entries, &iterable))
-    return false;
+  // JS::RootedValue iterable(cx);
+  // if (!JS::MapEntries(cx, entries, &iterable))
+  //   return false;
 
-  JS::ForOfIterator it(cx);
-  if (!it.init(iterable))
-    return false;
+  // JS::ForOfIterator it(cx);
+  // if (!it.init(iterable))
+  //   return false;
 
-  JS::RootedValue entry_val(cx);
-  JS::RootedObject entry(cx);
-  while (true) {
-    bool done;
-    if (!it.next(&entry_val, &done))
-      return false;
+  // JS::RootedValue entry_val(cx);
+  // JS::RootedObject entry(cx);
+  // while (true) {
+  //   bool done;
+  //   if (!it.next(&entry_val, &done))
+  //     return false;
 
-    if (done)
-      break;
+  //   if (done)
+  //     break;
 
-    entry = &entry_val.toObject();
-    JS_GetElement(cx, entry, 1, newArgs[0]);
-    JS_GetElement(cx, entry, 0, newArgs[1]);
+  //   entry = &entry_val.toObject();
+  //   JS_GetElement(cx, entry, 1, newArgs[0]);
+  //   JS_GetElement(cx, entry, 0, newArgs[1]);
 
-    if (!JS::Call(cx, args.thisv(), args[0], newArgs, &rval))
-      return false;
-  }
+  //   if (!JS::Call(cx, args.thisv(), args[0], newArgs, &rval))
+  //     return false;
+  // }
 
-  args.rval().setUndefined();
+  // args.rval().setUndefined();
   return true;
 }
 
 bool Headers::entries(JSContext *cx, unsigned argc, Value *vp) {
-  HEADERS_ITERATION_METHOD(0)
-  return MapEntries(cx, entries, args.rval());
+  // TODO(headers)
+  // HEADERS_ITERATION_METHOD(0)
+  // return MapEntries(cx, entries, args.rval());
+  return true;
 }
 
 bool Headers::keys(JSContext *cx, unsigned argc, Value *vp) {
-  HEADERS_ITERATION_METHOD(0)
-  return MapKeys(cx, entries, args.rval());
+  // TODO(headers)
+  // HEADERS_ITERATION_METHOD(0)
+  // return MapKeys(cx, entries, args.rval());
+  return true;
 }
 
 bool Headers::values(JSContext *cx, unsigned argc, Value *vp) {
-  HEADERS_ITERATION_METHOD(0)
-  return MapValues(cx, entries, args.rval());
+  // TODO(headers)
+  // HEADERS_ITERATION_METHOD(0)
+  // return MapValues(cx, entries, args.rval());
+  return true;
 }
 
 const JSFunctionSpec Headers::static_methods[] = {
@@ -864,16 +817,20 @@ const JSPropertySpec Headers::properties[] = {
 bool Headers::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
   CTOR_HEADER("Headers", 0);
   HandleValue headersInit = args.get(0);
-  RootedObject headersInstance(cx, JS_NewObjectForConstructor(cx, &class_, args));
-  if (!headersInstance) {
+  RootedObject self(cx, JS_NewObjectForConstructor(cx, &class_, args));
+  if (!self) {
     return false;
   }
-  SetReservedSlot(headersInstance, static_cast<uint32_t>(Slots::Guard),
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::Guard),
                   JS::Int32Value(static_cast<int32_t>(host_api::HttpHeadersGuard::None)));
-  if (!init_entries(cx, headersInstance, headersInit)) {
+  if (!init_entries(cx, self, headersInit)) {
     return false;
   }
-  args.rval().setObject(*headersInstance);
+
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersList), JS::PrivateValue(nullptr));
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersSortList), JS::PrivateValue(nullptr));
+
+  args.rval().setObject(*self);
   return true;
 }
 
@@ -897,7 +854,7 @@ bool Headers::init_class(JSContext *cx, JS::HandleObject global) {
   return JS_DefinePropertyById(cx, proto_obj, iteratorId, entries, 0);
 }
 
-JSObject *Headers::get_entries(JSContext *cx, HandleObject self) {
+Headers::HeadersList *Headers::get_entries(JSContext *cx, HandleObject self) {
   MOZ_ASSERT(is_instance(self));
   if (mode(self) == Mode::Uninitialized && !switch_mode(cx, self, Mode::ContentOnly)) {
     return nullptr;
@@ -906,10 +863,11 @@ JSObject *Headers::get_entries(JSContext *cx, HandleObject self) {
     return nullptr;
   }
 
-  return &GetReservedSlot(self, static_cast<size_t>(Slots::Entries)).toObject();
+  return static_cast<HeadersList *>(
+      GetReservedSlot(self, static_cast<size_t>(Slots::HeadersList)).toPrivate());
 }
 
-unique_ptr<host_api::HttpHeaders> Headers::handle_clone(JSContext* cx, HandleObject self) {
+unique_ptr<host_api::HttpHeaders> Headers::handle_clone(JSContext *cx, HandleObject self) {
   auto mode = Headers::mode(self);
 
   // If this instance uninitialized, return an empty handle without initializing this instance.

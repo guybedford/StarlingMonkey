@@ -122,7 +122,7 @@ async function main(event) {
             console.log(`chaining to /chained`);
             let response = await fetch("/chained");
             let body = await response.text();
-            resolve(new Response(body));
+            resolve(new Response(body, { headers: { 'a': 'b' }}));
             return;
         }
 
@@ -141,7 +141,17 @@ async function main(event) {
         // let body = pumpBody(response);
         let body = embeddedBody();
 
-        let resp = new Response(body, {headers: typeof response != "undefined" ? response.headers : undefined});
+        const headers = new Headers();
+        headers.set('a', 'b');
+        // This should switch us into cachedInContent
+        // for (const [k, v] of headers) {
+        //   console.log(k, v);
+        // }
+        // This should switch us from cachedInContent into ContentOnly and drop the host handle
+        headers.set('c', 'd');
+
+        // This is plain iteration
+        let resp = new Response(body, {headers: { 'a': 'b' }});
         console.log(`post resp ${resp}`);
         resolve(resp);
         // for (let [key, value] of response.headers.entries()) {

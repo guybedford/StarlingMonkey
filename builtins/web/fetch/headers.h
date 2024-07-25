@@ -88,6 +88,13 @@ public:
   static bool append_header_value(JSContext *cx, JS::HandleObject self, JS::HandleValue name,
                                   JS::HandleValue value, const char *fun_name);
 
+  /// Get the true header index at the given sorted list position.
+  /// Ensuring that HeadersSortList is recomputed if necessary in the process.
+  static size_t sorted_idx(JSContext *cx, JS::HandleObject self, size_t index);
+
+  /// Get the possibly comma-joined value for a given header key
+  static JSString* get_combined_value(JSContext *cx, JS::HandleObject self, size_t index);
+
   static Mode mode(JSObject* self) {
     MOZ_ASSERT(Headers::is_instance(self));
     Value modeVal = JS::GetReservedSlot(self, static_cast<size_t>(Slots::Mode));
@@ -121,11 +128,10 @@ public:
 
   static bool init_entries(JSContext *cx, HandleObject self, HandleValue init_headers);
 
-  /// Returns a Map object containing the headers.
-  ///
+  /// Returns the headers list of entries, constructing it if necessary.
   /// Depending on the `Mode` the instance is in, this can be a cache or the canonical store for
   /// the headers.
-  static HeadersList* get_entries(JSContext *cx, HandleObject self);
+  static HeadersList* get_list(JSContext *cx, HandleObject self);
 
   /**
    * Returns a cloned handle representing the contents of this Headers object.
@@ -136,6 +142,29 @@ public:
    * The handle is guaranteed to be uniquely owned by the caller.
    */
   static unique_ptr<host_api::HttpHeaders> handle_clone(JSContext*, HandleObject self);
+};
+
+class HeadersIterator final : public BuiltinNoConstructor<HeadersIterator> {
+  static bool next(JSContext *cx, unsigned argc, JS::Value *vp);
+
+public:
+  static constexpr const char *class_name = "Headers Iterator";
+
+  enum Slots {
+    Type,
+    Cursor,
+    Headers,
+    Count,
+  };
+
+  static const JSFunctionSpec static_methods[];
+  static const JSPropertySpec static_properties[];
+  static const JSFunctionSpec methods[];
+  static const JSPropertySpec properties[];
+
+  static bool init_class(JSContext *cx, HandleObject global);
+
+  static JSObject *create(JSContext *cx, JS::HandleObject headers, uint8_t iter_type);
 };
 
 } // namespace fetch

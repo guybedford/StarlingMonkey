@@ -3,18 +3,12 @@
 #include "encode.h"
 #include "fetch-errors.h"
 #include "sequence.hpp"
+#include "builtin.h"
 
 #include "js/Conversions.h"
 
 namespace builtins::web::fetch {
 namespace {
-
-#define HEADERS_ITERATION_METHOD(argc)                                                             \
-  METHOD_HEADER(argc)                                                                              \
-  JS::RootedObject entries(cx, get_entries(cx, self));                                             \
-  if (!entries) {                                                                                  \
-    return false;                                                                                  \
-  }
 
 const char VALID_NAME_CHARS[128] = {
     0, 0, 0, 0, 0, 0, 0, 0, //   0
@@ -288,15 +282,25 @@ static bool switch_mode(JSContext *cx, HandleObject self, const Headers::Mode mo
     if (!map) {
       return false;
     }
-    // SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Entries), ObjectValue(*map));
-    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Mode), JS::Int32Value(static_cast<int32_t>(mode)));
+    MOZ_ASSERT(static_cast<Headers::HeadersList *>(
+                   JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList))
+                       .toPrivate()) == nullptr);
+    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList),
+                    JS::PrivateValue(new Headers::HeadersList()));
+    MOZ_ASSERT(static_cast<std::vector<size_t> *>(
+                   JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersSortList))
+                       .toPrivate()) == nullptr);
+    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersSortList),
+                    JS::PrivateValue(new std::vector<size_t>()));
+    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Mode),
+                    JS::Int32Value(static_cast<int32_t>(Headers::Mode::ContentOnly)));
     return true;
   }
 
   if (current_mode == Headers::Mode::ContentOnly) {
     MOZ_ASSERT(mode == Headers::Mode::CachedInContent,
                "Switching from ContentOnly to HostOnly is wasteful and not implemented");
-    Headers::HeadersList *list = Headers::get_entries(cx, self);
+    Headers::HeadersList *list = Headers::get_list(cx, self);
     MOZ_ASSERT(list);
 
     auto handle = host_api::HttpHeaders::FromEntries(Headers::guard(self), *list);
@@ -375,44 +379,42 @@ bool append_single_normalized_header_value(JSContext *cx, HandleObject self, Han
       return true;
     }
 
-    // TODO(headers)
-    // RootedObject entries(cx, Headers::get_entries(cx, self));
-    // if (!entries) {
-    //   return false;
-    // }
+    Headers::HeadersList *list = Headers::get_list(cx, self);
+    MOZ_ASSERT(list);
 
-    // RootedValue name_val(cx);
-    // if (!redecode_str_if_changed(cx, name, name_chars, name_changed, &name_val)) {
-    //   return false;
-    // }
+    RootedValue name_val(cx);
+    if (!redecode_str_if_changed(cx, name, name_chars, name_changed, &name_val)) {
+      return false;
+    }
 
-    // RootedValue value_val(cx);
-    // if (!redecode_str_if_changed(cx, value, value_chars, value_changed, &value_val)) {
-    //   return false;
-    // }
+    RootedValue value_val(cx);
+    if (!redecode_str_if_changed(cx, value, value_chars, value_changed, &value_val)) {
+      return false;
+    }
 
-    // RootedValue entry(cx);
-    // if (!MapGet(cx, entries, name_val, &entry)) {
-    //   return false;
-    // }
+    RootedValue entry(cx);
+    Headers::get_combined_value(cx, self, )
+    if (!MapGet(cx, entries, name_val, &entry)) {
+      return false;
+    }
 
-    // if (!entry.isUndefined()) {
-    //   RootedString entry_str(cx, JS::ToString(cx, entry));
-    //   entry_str = JS_ConcatStrings(cx, entry_str, comma);
-    //   if (!entry_str) {
-    //     return false;
-    //   }
-    //   RootedString val_str(cx, value_val.toString());
-    //   entry_str = JS_ConcatStrings(cx, entry_str, val_str);
-    //   if (!entry_str) {
-    //     return false;
-    //   }
-    //   value_val.setString(entry_str);
-    // }
+    if (!entry.isUndefined()) {
+      RootedString entry_str(cx, JS::ToString(cx, entry));
+      entry_str = JS_ConcatStrings(cx, entry_str, comma);
+      if (!entry_str) {
+        return false;
+      }
+      RootedString val_str(cx, value_val.toString());
+      entry_str = JS_ConcatStrings(cx, entry_str, val_str);
+      if (!entry_str) {
+        return false;
+      }
+      value_val.setString(entry_str);
+    }
 
-    // if (!MapSet(cx, entries, name_val, value_val)) {
-    //   return false;
-    // }
+    if (!MapSet(cx, entries, name_val, value_val)) {
+      return false;
+    }
   }
 
   return true;
@@ -485,7 +487,8 @@ JSObject *Headers::create(JSContext *cx, HandleValue init_headers,
   if (!init_entries(cx, self, init_headers)) {
     return nullptr;
   }
-  MOZ_ASSERT(mode(self) == Headers::Mode::ContentOnly || mode(self) == Headers::Mode::Uninitialized);
+  MOZ_ASSERT(mode(self) == Headers::Mode::ContentOnly ||
+             mode(self) == Headers::Mode::Uninitialized);
   return self;
 }
 
@@ -493,8 +496,8 @@ bool Headers::init_entries(JSContext *cx, HandleObject self, HandleValue initv) 
   // TODO: check if initv is a Headers instance and clone its handle if so.
   // TODO: But note: forbidden headers have to be applied correctly.
   bool consumed = false;
-  if (!core::maybe_consume_sequence_or_record<append_header_value>(cx, initv, self,
-                                                                   &consumed, "Headers")) {
+  if (!core::maybe_consume_sequence_or_record<append_header_value>(cx, initv, self, &consumed,
+                                                                   "Headers")) {
     return false;
   }
 
@@ -521,8 +524,9 @@ bool Headers::get(JSContext *cx, unsigned argc, JS::Value *vp) {
     return retrieve_value_for_header_from_handle(cx, self, name_chars, args.rval());
   }
 
+  MOZ_ASSERT_UNREACHABLE("TODO HEADERS");
   // TODO(headers)
-  // RootedObject entries(cx, get_entries(cx, self));
+  // RootedObject entries(cx, get_list(cx, self));
   // if (!entries) {
   //   return false;
   // }
@@ -563,8 +567,9 @@ bool Headers::set(JSContext *cx, unsigned argc, JS::Value *vp) {
     }
   } else {
     MOZ_ASSERT(mode == Mode::ContentOnly);
+    MOZ_ASSERT_UNREACHABLE("TODO HEADERS");
     // TODO(headers)
-    // RootedObject entries(cx, get_entries(cx, self));
+    // RootedObject entries(cx, get_list(cx, self));
     // if (!entries) {
     //   return false;
     // }
@@ -606,8 +611,9 @@ bool Headers::has(JSContext *cx, unsigned argc, JS::Value *vp) {
     MOZ_ASSERT(!res.is_err());
     args.rval().setBoolean(res.unwrap());
   } else {
+    MOZ_ASSERT_UNREACHABLE("TODO HEADERS");
     // TODO(headers)
-    // RootedObject entries(cx, get_entries(cx, self));
+    // RootedObject entries(cx, get_list(cx, self));
     // if (!entries) {
     //   return false;
     // }
@@ -661,7 +667,7 @@ bool Headers::set_if_undefined(JSContext *cx, HandleObject self, string_view nam
 
   MOZ_ASSERT(mode(self) == Mode::ContentOnly);
   // TODO(headers)
-  // RootedObject entries(cx, get_entries(cx, self));
+  // RootedObject entries(cx, get_list(cx, self));
   // RootedString name_str(cx, core::decode(cx, name));
   // if (!name_str) {
   //   return false;
@@ -706,8 +712,9 @@ bool Headers::delete_(JSContext *cx, unsigned argc, JS::Value *vp) {
     }
   } else {
     MOZ_ASSERT(mode == Mode::ContentOnly);
+    MOZ_ASSERT_UNREACHABLE("TODO HEADERS");
     // TODO(headers)
-    // RootedObject entries(cx, get_entries(cx, self));
+    // RootedObject entries(cx, get_list(cx, self));
     // if (!entries) {
     //   return false;
     // }
@@ -721,70 +728,6 @@ bool Headers::delete_(JSContext *cx, unsigned argc, JS::Value *vp) {
   }
 
   args.rval().setUndefined();
-  return true;
-}
-
-bool Headers::forEach(JSContext *cx, unsigned argc, JS::Value *vp) {
-  // TODO(headers)
-  // HEADERS_ITERATION_METHOD(1)
-
-  // if (!args[0].isObject() || !JS::IsCallable(&args[0].toObject())) {
-  //   return api::throw_error(cx, api::Errors::ForEachCallback, "Headers");
-  // }
-
-  // JS::RootedValueArray<3> newArgs(cx);
-  // newArgs[2].setObject(*self);
-
-  // JS::RootedValue rval(cx);
-
-  // JS::RootedValue iterable(cx);
-  // if (!JS::MapEntries(cx, entries, &iterable))
-  //   return false;
-
-  // JS::ForOfIterator it(cx);
-  // if (!it.init(iterable))
-  //   return false;
-
-  // JS::RootedValue entry_val(cx);
-  // JS::RootedObject entry(cx);
-  // while (true) {
-  //   bool done;
-  //   if (!it.next(&entry_val, &done))
-  //     return false;
-
-  //   if (done)
-  //     break;
-
-  //   entry = &entry_val.toObject();
-  //   JS_GetElement(cx, entry, 1, newArgs[0]);
-  //   JS_GetElement(cx, entry, 0, newArgs[1]);
-
-  //   if (!JS::Call(cx, args.thisv(), args[0], newArgs, &rval))
-  //     return false;
-  // }
-
-  // args.rval().setUndefined();
-  return true;
-}
-
-bool Headers::entries(JSContext *cx, unsigned argc, Value *vp) {
-  // TODO(headers)
-  // HEADERS_ITERATION_METHOD(0)
-  // return MapEntries(cx, entries, args.rval());
-  return true;
-}
-
-bool Headers::keys(JSContext *cx, unsigned argc, Value *vp) {
-  // TODO(headers)
-  // HEADERS_ITERATION_METHOD(0)
-  // return MapKeys(cx, entries, args.rval());
-  return true;
-}
-
-bool Headers::values(JSContext *cx, unsigned argc, Value *vp) {
-  // TODO(headers)
-  // HEADERS_ITERATION_METHOD(0)
-  // return MapValues(cx, entries, args.rval());
   return true;
 }
 
@@ -835,15 +778,19 @@ bool Headers::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
 }
 
 bool Headers::init_class(JSContext *cx, JS::HandleObject global) {
-  bool ok = init_class_impl(cx, global);
-  if (!ok)
+  if (!init_class_impl(cx, global)) {
     return false;
+  }
 
   auto comma_str = JS_NewStringCopyN(cx, ", ", 2);
   if (!comma_str) {
     return false;
   }
   comma.init(cx, comma_str);
+
+  if (!HeadersIterator::init_class(cx, global)) {
+    return false;
+  }
 
   JS::RootedValue entries(cx);
   if (!JS_GetProperty(cx, proto_obj, "entries", &entries))
@@ -854,7 +801,7 @@ bool Headers::init_class(JSContext *cx, JS::HandleObject global) {
   return JS_DefinePropertyById(cx, proto_obj, iteratorId, entries, 0);
 }
 
-Headers::HeadersList *Headers::get_entries(JSContext *cx, HandleObject self) {
+Headers::HeadersList *Headers::get_list(JSContext *cx, HandleObject self) {
   MOZ_ASSERT(is_instance(self));
   if (mode(self) == Mode::Uninitialized && !switch_mode(cx, self, Mode::ContentOnly)) {
     return nullptr;
@@ -887,6 +834,163 @@ unique_ptr<host_api::HttpHeaders> Headers::handle_clone(JSContext *cx, HandleObj
     return nullptr;
   }
   return handle;
+}
+
+BUILTIN_ITERATOR_METHODS(Headers)
+
+// Headers Iterator
+JSObject *HeadersIterator::create(JSContext *cx, HandleObject headers, uint8_t type) {
+  JSObject *self = JS_NewObjectWithGivenProto(cx, &class_, proto_obj);
+  if (!self) {
+    return nullptr;
+  }
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::Type),
+                  JS::Int32Value(static_cast<int32_t>(type)));
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::Cursor), JS::Int32Value(0));
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::Headers), JS::ObjectValue(*headers));
+  return self;
+}
+
+const JSFunctionSpec HeadersIterator::static_methods[] = {
+    JS_FS_END,
+};
+
+const JSPropertySpec HeadersIterator::static_properties[] = {
+    JS_PS_END,
+};
+
+const JSFunctionSpec HeadersIterator::methods[] = {
+    JS_FN("next", HeadersIterator::next, 0, JSPROP_ENUMERATE),
+    JS_FS_END,
+};
+
+const JSPropertySpec HeadersIterator::properties[] = {
+    JS_PS_END,
+};
+
+bool HeadersIterator::init_class(JSContext *cx, JS::HandleObject global) {
+  JS::RootedObject iterator_proto(cx, JS::GetRealmIteratorPrototype(cx));
+  if (!iterator_proto)
+    return false;
+
+  if (!init_class_impl(cx, global, iterator_proto))
+    return false;
+
+  // Delete both the `HeadersIterator` global property and the
+  // `constructor` property on `HeadersIterator.prototype`. The latter
+  // because Iterators don't have their own constructor on the prototype.
+  return JS_DeleteProperty(cx, global, class_.name) &&
+         JS_DeleteProperty(cx, proto_obj, "constructor");
+}
+
+JSString *Headers::get_combined_value(JSContext *cx, JS::HandleObject self, bool is_set_cookie, size_t index) {
+  HeadersList *headers_list = static_cast<Headers::HeadersList *>(
+      JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
+  MOZ_ASSERT(headers_list);
+  host_api::HostString *val = &std::get<1>(headers_list->at(index));
+  // check if we need to join with the next value if it is the same key
+  if (index + 1 < headers_list->size()) {
+    // NOTE: set-cookie does not combine, instead each key is "set-cookie"
+    // size_t next_index = Headers::sorted_idx(cx, self, index + 1);
+    // host_api::HostString *next_val = &std::get<1>(headers_list->at(next_index));
+    MOZ_ASSERT_UNREACHABLE("TODO HEADERS LIST COMPARE");
+  }
+  return JS_NewStringCopyN(cx, reinterpret_cast<char *>(val->ptr.get()), val->len);
+}
+
+size_t Headers::sorted_idx(JSContext *cx, JS::HandleObject self, size_t index) {
+  std::vector<size_t> *headers_sort_list = static_cast<std::vector<size_t> *>(
+      JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersSortList)).toPrivate());
+  MOZ_ASSERT(headers_sort_list);
+
+  HeadersList *headers_list = static_cast<Headers::HeadersList *>(
+      JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
+  MOZ_ASSERT(headers_list);
+
+  // Empty length means we need to recompute
+  if (headers_sort_list->size() == 0) {
+    // lowercase sort
+    MOZ_ASSERT_UNREACHABLE("TODO HEADERS LIST SORT");
+  }
+
+  MOZ_ASSERT(headers_sort_list->size() == headers_list->size());
+  MOZ_RELEASE_ASSERT(index < headers_sort_list->size());
+  return headers_sort_list->at(index);
+}
+
+bool HeadersIterator::next(JSContext *cx, unsigned argc, Value *vp) {
+  METHOD_HEADER(0)
+  JS::RootedObject headers(cx, &JS::GetReservedSlot(self, Slots::Headers).toObject());
+  size_t index = JS::GetReservedSlot(self, Slots::Cursor).toInt32();
+  uint8_t type = static_cast<uint8_t>(JS::GetReservedSlot(self, Slots::Type).toInt32());
+
+  JS::RootedObject result(cx, JS_NewPlainObject(cx));
+  if (!result)
+    return false;
+
+  Headers::HeadersList *list = Headers::get_list(cx, headers);
+  MOZ_ASSERT(list);
+  if (index >= list->size()) {
+    JS_DefineProperty(cx, result, "done", true, JSPROP_ENUMERATE);
+    JS_DefineProperty(cx, result, "value", JS::UndefinedHandleValue, JSPROP_ENUMERATE);
+
+    args.rval().setObject(*result);
+    return true;
+  }
+
+  // map the index to the sorted index position
+  index = Headers::sorted_idx(cx, headers, index);
+
+  JS_DefineProperty(cx, result, "done", false, JSPROP_ENUMERATE);
+
+  JS::RootedValue key_val(cx);
+  JS::RootedValue val_val(cx);
+
+  if (type != ITER_TYPE_VALUES) {
+    host_api::HostString *key = &std::get<0>(list->at(index));
+    JS::RootedString str(cx,
+                         JS_NewStringCopyN(cx, reinterpret_cast<char *>(key->ptr.get()), key->len));
+    if (!str)
+      return false;
+    key_val = JS::StringValue(str);
+  }
+
+  if (type != ITER_TYPE_KEYS) {
+    JS::RootedString str(cx, Headers::get_combined_value(cx, headers, index));
+    if (!str)
+      return false;
+    val_val = JS::StringValue(str);
+  }
+
+  JS::RootedValue result_val(cx);
+
+  switch (type) {
+  case ITER_TYPE_ENTRIES: {
+    JS::RootedObject pair(cx, JS::NewArrayObject(cx, 2));
+    if (!pair)
+      return false;
+    JS_DefineElement(cx, pair, 0, key_val, JSPROP_ENUMERATE);
+    JS_DefineElement(cx, pair, 1, val_val, JSPROP_ENUMERATE);
+    result_val = JS::ObjectValue(*pair);
+    break;
+  }
+  case ITER_TYPE_KEYS: {
+    result_val = key_val;
+    break;
+  }
+  case ITER_TYPE_VALUES: {
+    result_val = val_val;
+    break;
+  }
+  default:
+    MOZ_RELEASE_ASSERT(false, "Invalid iter type");
+  }
+
+  JS_DefineProperty(cx, result, "value", result_val, JSPROP_ENUMERATE);
+
+  JS::SetReservedSlot(self, Slots::Cursor, JS::Int32Value(index + 1));
+  args.rval().setObject(*result);
+  return true;
 }
 
 } // namespace builtins::web::fetch

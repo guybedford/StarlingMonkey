@@ -418,7 +418,7 @@ JSObject *RequestOrResponse::maybe_headers(JSObject *obj) {
 }
 
 unique_ptr<host_api::HttpHeaders> RequestOrResponse::headers_handle_clone(JSContext* cx,
-  HandleObject self, host_api::HttpHeadersGuard guard) {
+  HandleObject self, Headers::HeadersGuard guard) {
   MOZ_ASSERT(is_instance(self));
 
   RootedObject headers(cx, maybe_headers(self));
@@ -428,7 +428,7 @@ unique_ptr<host_api::HttpHeaders> RequestOrResponse::headers_handle_clone(JSCont
 
   auto handle = RequestOrResponse::handle(self);
   if (!handle) {
-    return std::make_unique<host_api::HttpHeaders>(guard);
+    return std::make_unique<host_api::HttpHeaders>();
   }
 
   auto res = handle->headers();
@@ -436,7 +436,9 @@ unique_ptr<host_api::HttpHeaders> RequestOrResponse::headers_handle_clone(JSCont
     HANDLE_ERROR(cx, *err);
     return nullptr;
   }
-  return unique_ptr<host_api::HttpHeaders>(res.unwrap()->clone(guard));
+  auto clone_handle = unique_ptr<host_api::HttpHeaders>(res.unwrap()->clone());
+  Headers::guard_filter(*clone_handle, guard);
+  return clone_handle;
 }
 
 bool finish_outgoing_body_streaming(JSContext* cx, HandleObject body_owner) {
@@ -497,9 +499,9 @@ bool RequestOrResponse::append_body(JSContext *cx, JS::HandleObject self, JS::Ha
 JSObject *RequestOrResponse::headers(JSContext *cx, JS::HandleObject obj) {
   JSObject *headers = maybe_headers(obj);
   if (!headers) {
-    host_api::HttpHeadersGuard guard = Request::is_instance(obj)
-      ? host_api::HttpHeadersGuard::Request
-      : host_api::HttpHeadersGuard::Response;
+    Headers::HeadersGuard guard = Request::is_instance(obj)
+      ? Headers::HeadersGuard::Request
+      : Headers::HeadersGuard::Response;
     host_api::HttpHeadersReadOnly *handle;
     if (is_incoming(obj) && (handle = headers_handle(obj))) {
       headers = Headers::create(cx, handle, guard);
@@ -1213,16 +1215,16 @@ bool Request::clone(JSContext *cx, unsigned argc, JS::Value *vp) {
   if (headers) {
     RootedValue headers_val(cx, ObjectValue(*headers));
     JSObject *cloned_headers =
-        Headers::create(cx, headers_val, host_api::HttpHeadersGuard::Request);
+        Headers::create(cx, headers_val, Headers::HeadersGuard::Request);
     if (!cloned_headers) {
       return false;
     }
     cloned_headers_val.set(ObjectValue(*cloned_headers));
   } else if (RequestOrResponse::handle(self)) {
     auto handle =
-        RequestOrResponse::headers_handle_clone(cx, self, host_api::HttpHeadersGuard::Request);
+        RequestOrResponse::headers_handle_clone(cx, self, Headers::HeadersGuard::Request);
     JSObject *cloned_headers =
-        Headers::create(cx, handle.release(), host_api::HttpHeadersGuard::Request);
+        Headers::create(cx, handle.release(), Headers::HeadersGuard::Request);
     if (!cloned_headers) {
       return false;
     }
@@ -1615,7 +1617,7 @@ bool Request::initialize(JSContext *cx, JS::HandleObject request, JS::HandleValu
     headers_val.setObject(*input_headers);
   }
   if (!headers_val.isUndefined()) {
-    headers = Headers::create(cx, headers_val, host_api::HttpHeadersGuard::Request);
+    headers = Headers::create(cx, headers_val, Headers::HeadersGuard::Request);
     if (!headers) {
       return false;
     }
@@ -2337,7 +2339,7 @@ bool Response::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
 
   // 7.  (Reordered) If `init`["headers"] `exists`, then `fill` `this`’s `headers` with
   // `init`["headers"].
-  JS::RootedObject headers(cx, Headers::create(cx, headers_val, host_api::HttpHeadersGuard::Response));
+  JS::RootedObject headers(cx, Headers::create(cx, headers_val, Headers::HeadersGuard::Response));
   if (!headers) {
     return false;
   }

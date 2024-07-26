@@ -1,11 +1,12 @@
 #include "headers.h"
+#include "builtin.h"
 #include "decode.h"
 #include "encode.h"
 #include "fetch-errors.h"
 #include "sequence.hpp"
-#include "builtin.h"
 
 #include "js/Conversions.h"
+#include <compare>
 
 namespace builtins::web::fetch {
 namespace {
@@ -96,6 +97,25 @@ host_api::HostString normalize_header_name(JSContext *cx, HandleValue name_val, 
 
   return name;
 }
+
+/*
+ * Validates a header name by checking for invalid characters
+ */
+// bool validate_header_name(JSContext *cx, host_api::HostString name, const char *fun_name) {
+//   if (name.len == 0) {
+//     api::throw_error(cx, FetchErrors::EmptyHeaderName, fun_name);
+//     return false;
+//   }
+//   char *name_chars = name.begin();
+//   for (size_t i = 0; i < name.len; i++) {
+//     const unsigned char ch = name_chars[i];
+//     if (ch > 127 || !VALID_NAME_CHARS[ch]) {
+//       api::throw_error(cx, FetchErrors::InvalidHeaderName, fun_name, name_chars);
+//       return false;
+//     }
+//   }
+//   return true;
+// }
 
 /**
  * Validates and normalizes the given header value, by
@@ -206,51 +226,51 @@ bool retrieve_value_for_header_from_handle(JSContext *cx, JS::HandleObject self,
   return true;
 }
 
-std::string_view special_chars = "=,;";
+// std::string_view special_chars = "=,;";
 
-std::vector<std::string_view> splitCookiesString(std::string_view cookiesString) {
-  std::vector<std::string_view> cookiesStrings;
-  std::size_t currentPosition = 0; // Current position in the string
-  std::size_t start;               // Start position of the current cookie
-  std::size_t lastComma;           // Position of the last comma found
-  std::size_t nextStart;           // Position of the start of the next cookie
+// std::vector<std::string_view> splitCookiesString(std::string_view cookiesString) {
+//   std::vector<std::string_view> cookiesStrings;
+//   std::size_t currentPosition = 0; // Current position in the string
+//   std::size_t start;               // Start position of the current cookie
+//   std::size_t lastComma;           // Position of the last comma found
+//   std::size_t nextStart;           // Position of the start of the next cookie
 
-  // Iterate over the string and split it into cookies.
-  while (currentPosition < cookiesString.length()) {
-    start = currentPosition;
+//   // Iterate over the string and split it into cookies.
+//   while (currentPosition < cookiesString.length()) {
+//     start = currentPosition;
 
-    // Iterate until we find a comma that might be used as a separator.
-    while ((currentPosition = cookiesString.find_first_of(',', currentPosition)) !=
-           std::string_view::npos) {
-      // ',' is a cookie separator only if we later have '=', before having ';' or ','
-      lastComma = currentPosition;
-      nextStart = ++currentPosition;
+//     // Iterate until we find a comma that might be used as a separator.
+//     while ((currentPosition = cookiesString.find_first_of(',', currentPosition)) !=
+//            std::string_view::npos) {
+//       // ',' is a cookie separator only if we later have '=', before having ';' or ','
+//       lastComma = currentPosition;
+//       nextStart = ++currentPosition;
 
-      // Check if the next sequence of characters is a non-special character followed by an equals
-      // sign.
-      currentPosition = cookiesString.find_first_of(special_chars, currentPosition);
+//       // Check if the next sequence of characters is a non-special character followed by an equals
+//       // sign.
+//       currentPosition = cookiesString.find_first_of(special_chars, currentPosition);
 
-      // If the current character is an equals sign, we have found a cookie separator.
-      if (currentPosition != std::string_view::npos && cookiesString.at(currentPosition) == '=') {
-        // currentPosition is inside the next cookie, so back up and return it.
-        currentPosition = nextStart;
-        cookiesStrings.push_back(cookiesString.substr(start, lastComma - start));
-        start = currentPosition;
-      } else {
-        // The cookie contains ';' or ',' as part of the value
-        // so we need to keep accumulating characters
-        currentPosition = lastComma + 1;
-      }
-    }
+//       // If the current character is an equals sign, we have found a cookie separator.
+//       if (currentPosition != std::string_view::npos && cookiesString.at(currentPosition) == '=') {
+//         // currentPosition is inside the next cookie, so back up and return it.
+//         currentPosition = nextStart;
+//         cookiesStrings.push_back(cookiesString.substr(start, lastComma - start));
+//         start = currentPosition;
+//       } else {
+//         // The cookie contains ';' or ',' as part of the value
+//         // so we need to keep accumulating characters
+//         currentPosition = lastComma + 1;
+//       }
+//     }
 
-    // If we reach the end of the string without finding a separator, add the last cookie to the
-    // vector.
-    if (currentPosition >= cookiesString.length()) {
-      cookiesStrings.push_back(cookiesString.substr(start, cookiesString.length() - start));
-    }
-  }
-  return cookiesStrings;
-}
+//     // If we reach the end of the string without finding a separator, add the last cookie to the
+//     // vector.
+//     if (currentPosition >= cookiesString.length()) {
+//       cookiesStrings.push_back(cookiesString.substr(start, cookiesString.length() - start));
+//     }
+//   }
+//   return cookiesStrings;
+// }
 
 } // namespace
 
@@ -303,7 +323,7 @@ static bool switch_mode(JSContext *cx, HandleObject self, const Headers::Mode mo
     Headers::HeadersList *list = Headers::get_list(cx, self);
     MOZ_ASSERT(list);
 
-    auto handle = host_api::HttpHeaders::FromEntries(Headers::guard(self), *list);
+    auto handle = host_api::HttpHeaders::FromEntries(*list);
     if (handle.is_err()) {
       return api::throw_error(cx, FetchErrors::HeadersCloningFailed);
     }
@@ -346,7 +366,8 @@ bool prepare_for_entries_modification(JSContext *cx, JS::HandleObject self) {
   if (mode == Headers::Mode::HostOnly) {
     auto handle = get_handle(self);
     if (!handle->is_writable()) {
-      auto new_handle = handle->clone(Headers::guard(self));
+      // TODO(headers): add guard removal to cloned handle
+      auto new_handle = handle->clone();
       if (!new_handle) {
         return api::throw_error(cx, FetchErrors::HeadersCloningFailed);
       }
@@ -359,62 +380,27 @@ bool prepare_for_entries_modification(JSContext *cx, JS::HandleObject self) {
   return true;
 }
 
-bool append_single_normalized_header_value(JSContext *cx, HandleObject self, HandleValue name,
-                                           string_view name_chars, bool name_changed,
-                                           HandleValue value, string_view value_chars,
-                                           bool value_changed, const char *fun_name) {
+bool append_header_host_string(JSContext *cx, HandleObject self, host_api::HostString &header_name,
+                               host_api::HostString &header_val) {
   Headers::Mode mode = Headers::mode(self);
   if (mode == Headers::Mode::HostOnly) {
     auto handle = get_handle(self)->as_writable();
     MOZ_ASSERT(handle);
-    auto res = handle->append(name_chars, value_chars);
+    auto res = handle->append(header_name, header_val);
     if (auto *err = res.to_err()) {
       HANDLE_ERROR(cx, *err);
       return false;
     }
   } else {
     MOZ_ASSERT(mode == Headers::Mode::ContentOnly);
-    auto guard = Headers::guard(self);
-    if (!host_api::HttpHeaders::check_guard(guard, name_chars)) {
+    if (!Headers::check_guard(cx, self, header_name)) {
       return true;
     }
 
     Headers::HeadersList *list = Headers::get_list(cx, self);
     MOZ_ASSERT(list);
 
-    RootedValue name_val(cx);
-    if (!redecode_str_if_changed(cx, name, name_chars, name_changed, &name_val)) {
-      return false;
-    }
-
-    RootedValue value_val(cx);
-    if (!redecode_str_if_changed(cx, value, value_chars, value_changed, &value_val)) {
-      return false;
-    }
-
-    RootedValue entry(cx);
-    Headers::get_combined_value(cx, self, )
-    if (!MapGet(cx, entries, name_val, &entry)) {
-      return false;
-    }
-
-    if (!entry.isUndefined()) {
-      RootedString entry_str(cx, JS::ToString(cx, entry));
-      entry_str = JS_ConcatStrings(cx, entry_str, comma);
-      if (!entry_str) {
-        return false;
-      }
-      RootedString val_str(cx, value_val.toString());
-      entry_str = JS_ConcatStrings(cx, entry_str, val_str);
-      if (!entry_str) {
-        return false;
-      }
-      value_val.setString(entry_str);
-    }
-
-    if (!MapSet(cx, entries, name_val, value_val)) {
-      return false;
-    }
+    list->emplace_back(header_name.copy(), header_val.copy());
   }
 
   return true;
@@ -429,25 +415,25 @@ bool Headers::append_header_value(JSContext *cx, JS::HandleObject self, JS::Hand
     return false;
   }
 
-  std::string_view name_str = name_chars;
-  if (name_str == "set-cookie") {
-    for (auto value : splitCookiesString(value_chars)) {
-      if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed,
-                                                 UndefinedHandleValue, value, true, fun_name)) {
-        return false;
-      }
-    }
-  } else {
-    if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed, value,
-                                               value_chars, value_changed, fun_name)) {
-      return false;
-    }
-  }
+  // std::string_view name_str = name_chars;
+  // if (name_str == "set-cookie") {
+  //   for (auto value : splitCookiesString(value_chars)) {
+  //     if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed,
+  //                                                UndefinedHandleValue, value, true, fun_name)) {
+  //       return false;
+  //     }
+  //   }
+  // } else {
+  //   if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed, value,
+  //                                              value_chars, value_changed, fun_name)) {
+  //     return false;
+  //   }
+  // }
 
   return true;
 }
 
-JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersGuard guard) {
+JSObject *Headers::create(JSContext *cx, HeadersGuard guard) {
   JSObject *self = JS_NewObjectWithGivenProto(cx, &class_, proto_obj);
   if (!self) {
     return nullptr;
@@ -465,7 +451,7 @@ JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersGuard guard) {
 }
 
 JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersReadOnly *handle,
-                          host_api::HttpHeadersGuard guard) {
+                          HeadersGuard guard) {
   RootedObject self(cx, create(cx, guard));
   if (!self) {
     return nullptr;
@@ -479,7 +465,7 @@ JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersReadOnly *handle,
 }
 
 JSObject *Headers::create(JSContext *cx, HandleValue init_headers,
-                          host_api::HttpHeadersGuard guard) {
+                          HeadersGuard guard) {
   RootedObject self(cx, create(cx, guard));
   if (!self) {
     return nullptr;
@@ -765,7 +751,7 @@ bool Headers::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
     return false;
   }
   SetReservedSlot(self, static_cast<uint32_t>(Slots::Guard),
-                  JS::Int32Value(static_cast<int32_t>(host_api::HttpHeadersGuard::None)));
+                  JS::Int32Value(static_cast<int32_t>(HeadersGuard::None)));
   if (!init_entries(cx, self, headersInit)) {
     return false;
   }
@@ -777,7 +763,90 @@ bool Headers::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
   return true;
 }
 
+static std::list<string_view> forbidden_request_headers;
+static std::list<string_view> forbidden_response_headers;
+
+enum class Ordering {
+  Less,
+  Equal,
+  Greater
+};
+
+template <typename T, auto compare>
+void quicksort(std::list<T>& list) {
+  if (list.size() <= 1)
+    return;
+  T pivot = list.front();
+  std::list<T> left, middle, right;
+  for (auto it = list.begin(); it != list.end(); ++it) {
+    Ordering order = compare(*it, pivot);
+    if (order == Ordering::Less)
+      left.push_back(*it);
+    else if (order == Ordering::Equal)
+      middle.push_back(*it);
+    else
+      right.push_back(*it);
+  }
+  list.clear();
+  quicksort<T, compare>(left);
+  quicksort<T, compare>(right);
+  list.splice(list.end(), left);
+  list.splice(list.end(), middle);
+  list.splice(list.end(), right);
+}
+
+inline char header_lowercase(const char c) {
+  return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+}
+
+template <typename T, auto compare>
+bool binary_search(const std::list<T>& list, const T& target) {
+  auto it = list.begin();
+  auto end = list.end();
+  while (it != end) {
+    auto mid = std::next(it, std::distance(it, end) / 2);
+    Ordering order = compare(*mid, target);
+    if (order == Ordering::Equal) {
+      return true;
+    } else if (order == Ordering::Less) {
+      it = std::next(mid);
+    } else {
+      end = mid;
+    }
+  }
+  return false;
+}
+
+Ordering header_compare(const std::string_view a, const std::string_view b) {
+  auto it_a = a.begin();
+  auto it_b = b.begin();
+  while (it_a != a.end() && it_b != b.end()) {
+    char ca = header_lowercase(*it_a);
+    char cb = header_lowercase(*it_b);
+    if (ca < cb) {
+      return Ordering::Less;
+    } else if (ca > cb) {
+      return Ordering::Greater;
+    }
+    ++it_a;
+    ++it_b;
+  }
+  if (it_a == a.end()) {
+    return it_b == b.end() ? Ordering::Equal : Ordering::Less;
+  } else {
+    return Ordering::Greater;
+  }
+}
+
 bool Headers::init_class(JSContext *cx, JS::HandleObject global) {
+  // get the host forbidden headers for guard checks
+  forbidden_request_headers = host_api::HttpHeaders::get_forbidden_request_headers();
+  forbidden_response_headers = host_api::HttpHeaders::get_forbidden_response_headers();
+
+  // sort the forbidden headers with the lowercase-invariant comparator
+  quicksort<string_view, header_compare>(forbidden_request_headers);
+  quicksort<string_view, header_compare>(forbidden_response_headers);
+
   if (!init_class_impl(cx, global)) {
     return false;
   }
@@ -819,7 +888,7 @@ unique_ptr<host_api::HttpHeaders> Headers::handle_clone(JSContext *cx, HandleObj
 
   // If this instance uninitialized, return an empty handle without initializing this instance.
   if (mode == Mode::Uninitialized) {
-    return std::make_unique<host_api::HttpHeaders>(guard(self));
+    return std::make_unique<host_api::HttpHeaders>();
   }
 
   if (mode == Mode::ContentOnly && !switch_mode(cx, self, Mode::CachedInContent)) {
@@ -828,12 +897,72 @@ unique_ptr<host_api::HttpHeaders> Headers::handle_clone(JSContext *cx, HandleObj
     return nullptr;
   }
 
-  auto handle = unique_ptr<host_api::HttpHeaders>(get_handle(self)->clone(guard(self)));
+  auto handle = unique_ptr<host_api::HttpHeaders>(get_handle(self)->clone());
   if (!handle) {
     api::throw_error(cx, FetchErrors::HeadersCloningFailed);
     return nullptr;
   }
   return handle;
+}
+
+bool Headers::check_guard(JSContext *cx, HandleObject self, string_view name) {
+  // TODO(headers): guard filter
+  //   std::list<const char*>* forbidden_headers = nullptr;
+  //   switch (guard) {
+  //   case HeadersGuard::None:
+  //     return true;
+  //   case HeadersGuard::Request:
+  //     forbidden_headers = &forbidden_request_headers;
+  //     break;
+  //   case HeadersGuard::Response:
+  //     forbidden_headers = &forbidden_response_headers;
+  //     break;
+  //   default:
+  //     MOZ_ASSERT_UNREACHABLE();
+  //   }
+
+  //   if (!forbidden_headers) {
+  //     return true;
+  //   }
+
+  //   for (auto header : *forbidden_headers) {
+  //     if (header_name.compare(header) == 0) {
+  //       return false;
+  //     }
+  //   }
+
+  //   return true;
+  return true;
+}
+
+void Headers::guard_filter(host_api::HttpHeaders &handle, HeadersGuard guard) {
+
+}
+
+void Headers::guard_filter(JSContext *cx, HandleObject self, HeadersGuard guard) {
+  // TODO(headers): implement guard filter against appropriate forbidden headers list
+  //   std::list<const char*>* forbidden_headers = nullptr;
+  //   switch (guard) {
+  //   case HeadersGuard::Request:
+  //     forbidden_headers = &forbidden_request_headers;
+  //     break;
+  //   case HeadersGuard::Response:
+  //     break;
+  //   case HeadersGuard::None:
+  //     break;
+  //   default:
+  //     MOZ_ASSERT_UNREACHABLE();
+  //   }
+
+  //   if (!forbidden_headers) {
+  //     return headers;
+  //   }
+
+  //   for (auto header : *forbidden_headers) {
+  //     if (headers->has(header).unwrap()) {
+  //       headers->remove(header).unwrap();
+  //     }
+  //   }
 }
 
 BUILTIN_ITERATOR_METHODS(Headers)
@@ -883,7 +1012,8 @@ bool HeadersIterator::init_class(JSContext *cx, JS::HandleObject global) {
          JS_DeleteProperty(cx, proto_obj, "constructor");
 }
 
-JSString *Headers::get_combined_value(JSContext *cx, JS::HandleObject self, bool is_set_cookie, size_t index) {
+JSString *Headers::get_combined_value(JSContext *cx, JS::HandleObject self, bool is_set_cookie,
+                                      size_t index) {
   HeadersList *headers_list = static_cast<Headers::HeadersList *>(
       JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
   MOZ_ASSERT(headers_list);
@@ -956,7 +1086,7 @@ bool HeadersIterator::next(JSContext *cx, unsigned argc, Value *vp) {
   }
 
   if (type != ITER_TYPE_KEYS) {
-    JS::RootedString str(cx, Headers::get_combined_value(cx, headers, index));
+    JS::RootedString str(cx, Headers::get_combined_value(cx, headers, false, index));
     if (!str)
       return false;
     val_val = JS::StringValue(str);

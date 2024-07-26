@@ -53,13 +53,14 @@ public:
   /// If a header is added, deleted, or replaced on an instance in `CachedInContent` mode, the
   /// instance transitions to `ContentOnly` mode, and the underlying resource handle is discarded.
   enum class Mode {
-    HostOnly, // Headers are stored in the host.
+    HostOnly,        // Headers are stored in the host.
     CachedInContent, // Host holds canonical headers, content a cached copy.
-    ContentOnly, // Headers are stored in a Map held by the `Entries` slot.
-    Uninitialized, // Headers have not been initialized.
+    ContentOnly,     // Headers are stored in a Map held by the `Entries` slot.
+    Uninitialized,   // Headers have not been initialized.
   };
 
-  // Headers internal data structure is a list of key-value pairs, ready to go as owned host strings.
+  // Headers internal data structure is a list of key-value pairs, ready to go as owned host
+  // strings.
   using HeadersList = std::vector<std::tuple<host_api::HostString, host_api::HostString>>;
   // A sort list is maintained of ordered indicies of the the sorted lowercase keys of main headers
   // list, with each index of HeadersList always being present in this list once and only once. When
@@ -73,6 +74,12 @@ public:
     Mode,
     Guard,
     Count,
+  };
+
+  enum class HeadersGuard {
+    None,
+    Request,
+    Response,
   };
 
   /**
@@ -93,9 +100,10 @@ public:
   static size_t sorted_idx(JSContext *cx, JS::HandleObject self, size_t index);
 
   /// Get the possibly comma-joined value for a given header key
-  static JSString* get_combined_value(JSContext *cx, JS::HandleObject self, size_t index);
+  static JSString *get_combined_value(JSContext *cx, JS::HandleObject self, bool is_set_cookie,
+                                      size_t index);
 
-  static Mode mode(JSObject* self) {
+  static Mode mode(JSObject *self) {
     MOZ_ASSERT(Headers::is_instance(self));
     Value modeVal = JS::GetReservedSlot(self, static_cast<size_t>(Slots::Mode));
     if (modeVal.isUndefined()) {
@@ -104,10 +112,10 @@ public:
     return static_cast<Mode>(modeVal.toInt32());
   }
 
-  static host_api::HttpHeadersGuard guard(JSObject* self) {
+  static HeadersGuard guard(JSObject *self) {
     MOZ_ASSERT(Headers::is_instance(self));
     Value modeVal = JS::GetReservedSlot(self, static_cast<size_t>(Slots::Guard));
-    return static_cast<host_api::HttpHeadersGuard>(modeVal.toInt32());
+    return static_cast<HeadersGuard>(modeVal.toInt32());
   }
 
   static const JSFunctionSpec static_methods[];
@@ -120,18 +128,23 @@ public:
   static bool init_class(JSContext *cx, HandleObject global);
   static bool constructor(JSContext *cx, unsigned argc, Value *vp);
 
-  static JSObject *create(JSContext *cx, host_api::HttpHeadersGuard guard);
-  static JSObject *create(JSContext *cx, HandleValue init_headers,
-                          host_api::HttpHeadersGuard guard);
-  static JSObject *create(JSContext *cx, host_api::HttpHeadersReadOnly *handle,
-                          host_api::HttpHeadersGuard guard);
+  static JSObject *create(JSContext *cx, HeadersGuard guard);
+  static JSObject *create(JSContext *cx, HandleValue init_headers, HeadersGuard guard);
+  static JSObject *create(JSContext *cx, host_api::HttpHeadersReadOnly *handle, HeadersGuard guard);
 
   static bool init_entries(JSContext *cx, HandleObject self, HandleValue init_headers);
 
   /// Returns the headers list of entries, constructing it if necessary.
   /// Depending on the `Mode` the instance is in, this can be a cache or the canonical store for
   /// the headers.
-  static HeadersList* get_list(JSContext *cx, HandleObject self);
+  static HeadersList *get_list(JSContext *cx, HandleObject self);
+
+  /// Filter the headers based on the provided headers guard, and whatever mode the headers are in.
+  static void guard_filter(JSContext *cx, HandleObject self, HeadersGuard guard);
+  static void guard_filter(host_api::HttpHeaders &handle, HeadersGuard guard);
+
+  /// Check if a specific header name is guarded by the headers guard.
+  static bool check_guard(JSContext *cx, HandleObject self, string_view name);
 
   /**
    * Returns a cloned handle representing the contents of this Headers object.
@@ -141,7 +154,7 @@ public:
    *
    * The handle is guaranteed to be uniquely owned by the caller.
    */
-  static unique_ptr<host_api::HttpHeaders> handle_clone(JSContext*, HandleObject self);
+  static unique_ptr<host_api::HttpHeaders> handle_clone(JSContext *, HandleObject self);
 };
 
 class HeadersIterator final : public BuiltinNoConstructor<HeadersIterator> {

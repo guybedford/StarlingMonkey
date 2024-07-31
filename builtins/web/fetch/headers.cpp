@@ -6,7 +6,7 @@
 #include "sequence.hpp"
 
 #include "js/Conversions.h"
-#include <compare>
+#include <numeric>
 
 namespace builtins::web::fetch {
 namespace {
@@ -246,12 +246,14 @@ bool retrieve_value_for_header_from_handle(JSContext *cx, JS::HandleObject self,
 //       lastComma = currentPosition;
 //       nextStart = ++currentPosition;
 
-//       // Check if the next sequence of characters is a non-special character followed by an equals
+//       // Check if the next sequence of characters is a non-special character followed by an
+//       equals
 //       // sign.
 //       currentPosition = cookiesString.find_first_of(special_chars, currentPosition);
 
 //       // If the current character is an equals sign, we have found a cookie separator.
-//       if (currentPosition != std::string_view::npos && cookiesString.at(currentPosition) == '=') {
+//       if (currentPosition != std::string_view::npos && cookiesString.at(currentPosition) == '=')
+//       {
 //         // currentPosition is inside the next cookie, so back up and return it.
 //         currentPosition = nextStart;
 //         cookiesStrings.push_back(cookiesString.substr(start, lastComma - start));
@@ -415,20 +417,22 @@ bool Headers::append_header_value(JSContext *cx, JS::HandleObject self, JS::Hand
     return false;
   }
 
-  // std::string_view name_str = name_chars;
-  // if (name_str == "set-cookie") {
-  //   for (auto value : splitCookiesString(value_chars)) {
-  //     if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed,
-  //                                                UndefinedHandleValue, value, true, fun_name)) {
-  //       return false;
-  //     }
-  //   }
-  // } else {
-  //   if (!append_single_normalized_header_value(cx, self, name, name_chars, name_changed, value,
-  //                                              value_chars, value_changed, fun_name)) {
-  //     return false;
-  //   }
-  // }
+  // TODO(headers): These must be normalizing encodes
+  // TODO(headers): name must come from existing name match if there is one
+  host_api::HostString name_str = core::encode(cx, name);
+  if (!name_str.ptr) {
+    // TODO(headers): error handling
+    return false;
+  }
+  host_api::HostString value_str = core::encode(cx, value);
+  if (!name_str.ptr) {
+    // TODO(headers): error handling
+    return false;
+  }
+
+  if (!append_header_host_string(cx, self, name_str, value_str)) {
+    return false;
+  }
 
   return true;
 }
@@ -464,8 +468,7 @@ JSObject *Headers::create(JSContext *cx, host_api::HttpHeadersReadOnly *handle,
   return self;
 }
 
-JSObject *Headers::create(JSContext *cx, HandleValue init_headers,
-                          HeadersGuard guard) {
+JSObject *Headers::create(JSContext *cx, HandleValue init_headers, HeadersGuard guard) {
   RootedObject self(cx, create(cx, guard));
   if (!self) {
     return nullptr;
@@ -763,59 +766,12 @@ bool Headers::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
   return true;
 }
 
-static std::list<string_view> forbidden_request_headers;
-static std::list<string_view> forbidden_response_headers;
+static std::vector<string_view> forbidden_request_headers;
+static std::vector<string_view> forbidden_response_headers;
 
-enum class Ordering {
-  Less,
-  Equal,
-  Greater
-};
+enum class Ordering { Less, Equal, Greater };
 
-template <typename T, auto compare>
-void quicksort(std::list<T>& list) {
-  if (list.size() <= 1)
-    return;
-  T pivot = list.front();
-  std::list<T> left, middle, right;
-  for (auto it = list.begin(); it != list.end(); ++it) {
-    Ordering order = compare(*it, pivot);
-    if (order == Ordering::Less)
-      left.push_back(*it);
-    else if (order == Ordering::Equal)
-      middle.push_back(*it);
-    else
-      right.push_back(*it);
-  }
-  list.clear();
-  quicksort<T, compare>(left);
-  quicksort<T, compare>(right);
-  list.splice(list.end(), left);
-  list.splice(list.end(), middle);
-  list.splice(list.end(), right);
-}
-
-inline char header_lowercase(const char c) {
-  return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
-}
-
-template <typename T, auto compare>
-bool binary_search(const std::list<T>& list, const T& target) {
-  auto it = list.begin();
-  auto end = list.end();
-  while (it != end) {
-    auto mid = std::next(it, std::distance(it, end) / 2);
-    Ordering order = compare(*mid, target);
-    if (order == Ordering::Equal) {
-      return true;
-    } else if (order == Ordering::Less) {
-      it = std::next(mid);
-    } else {
-      end = mid;
-    }
-  }
-  return false;
-}
+inline char header_lowercase(const char c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; }
 
 Ordering header_compare(const std::string_view a, const std::string_view b) {
   auto it_a = a.begin();
@@ -838,14 +794,51 @@ Ordering header_compare(const std::string_view a, const std::string_view b) {
   }
 }
 
+template <typename T, auto compare>
+bool binary_search(const std::vector<T> &list, const T &target) {
+  auto it = list.begin();
+  auto end = list.end();
+  while (it != end) {
+    auto mid = std::next(it, std::distance(it, end) / 2);
+    Ordering order = compare(*mid, target);
+    if (order == Ordering::Equal) {
+      return true;
+    } else if (order == Ordering::Less) {
+      it = std::next(mid);
+    } else {
+      end = mid;
+    }
+  }
+  return false;
+}
+
+struct HeaderCompare {
+  bool operator()(const std::string_view a, const std::string_view b) {
+    return header_compare(a, b) == Ordering::Less;
+  }
+};
+
+class HeadersSortListCompare {
+  const Headers::HeadersList *headers_;
+
+public:
+  HeadersSortListCompare(const Headers::HeadersList *headers) : headers_(headers) {}
+
+  bool operator()(size_t a, size_t b) {
+    auto header_a = &std::get<0>(headers_->at(a));
+    auto header_b = &std::get<0>(headers_->at(b));
+    return header_compare(*header_a, *header_b) == Ordering::Less;
+  }
+};
+
 bool Headers::init_class(JSContext *cx, JS::HandleObject global) {
   // get the host forbidden headers for guard checks
   forbidden_request_headers = host_api::HttpHeaders::get_forbidden_request_headers();
   forbidden_response_headers = host_api::HttpHeaders::get_forbidden_response_headers();
 
   // sort the forbidden headers with the lowercase-invariant comparator
-  quicksort<string_view, header_compare>(forbidden_request_headers);
-  quicksort<string_view, header_compare>(forbidden_response_headers);
+  std::sort(forbidden_request_headers.begin(), forbidden_request_headers.end(), HeaderCompare());
+  std::sort(forbidden_response_headers.begin(), forbidden_response_headers.end(), HeaderCompare());
 
   if (!init_class_impl(cx, global)) {
     return false;
@@ -907,7 +900,7 @@ unique_ptr<host_api::HttpHeaders> Headers::handle_clone(JSContext *cx, HandleObj
 
 bool Headers::check_guard(JSContext *cx, HandleObject self, string_view name) {
   // TODO(headers): guard filter
-  //   std::list<const char*>* forbidden_headers = nullptr;
+  //   std::vector<const char*>* forbidden_headers = nullptr;
   //   switch (guard) {
   //   case HeadersGuard::None:
   //     return true;
@@ -935,13 +928,11 @@ bool Headers::check_guard(JSContext *cx, HandleObject self, string_view name) {
   return true;
 }
 
-void Headers::guard_filter(host_api::HttpHeaders &handle, HeadersGuard guard) {
-
-}
+void Headers::guard_filter(host_api::HttpHeaders &handle, HeadersGuard guard) {}
 
 void Headers::guard_filter(JSContext *cx, HandleObject self, HeadersGuard guard) {
   // TODO(headers): implement guard filter against appropriate forbidden headers list
-  //   std::list<const char*>* forbidden_headers = nullptr;
+  //   std::vector<const char*>* forbidden_headers = nullptr;
   //   switch (guard) {
   //   case HeadersGuard::Request:
   //     forbidden_headers = &forbidden_request_headers;
@@ -1012,20 +1003,31 @@ bool HeadersIterator::init_class(JSContext *cx, JS::HandleObject global) {
          JS_DeleteProperty(cx, proto_obj, "constructor");
 }
 
-JSString *Headers::get_combined_value(JSContext *cx, JS::HandleObject self, bool is_set_cookie,
-                                      size_t index) {
+JS::HandleString Headers::get_combined_value(JSContext *cx, JS::HandleObject self, size_t *index) {
   HeadersList *headers_list = static_cast<Headers::HeadersList *>(
       JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
   MOZ_ASSERT(headers_list);
-  host_api::HostString *val = &std::get<1>(headers_list->at(index));
-  // check if we need to join with the next value if it is the same key
-  if (index + 1 < headers_list->size()) {
-    // NOTE: set-cookie does not combine, instead each key is "set-cookie"
-    // size_t next_index = Headers::sorted_idx(cx, self, index + 1);
-    // host_api::HostString *next_val = &std::get<1>(headers_list->at(next_index));
-    MOZ_ASSERT_UNREACHABLE("TODO HEADERS LIST COMPARE");
+  host_api::HostString *val = &std::get<1>(headers_list->at(Headers::sorted_idx(cx, self, *index)));
+  // check if we need to join with the next value if it is the same key, comma-separated
+  JS::RootedString str(cx,
+                       JS_NewStringCopyN(cx, reinterpret_cast<char *>(val->ptr.get()), val->len));
+  while (*index + 1 < headers_list->size()) {
+    size_t next_index = Headers::sorted_idx(cx, self, *index + 1);
+    host_api::HostString *next_val = &std::get<1>(headers_list->at(next_index));
+    if (header_compare(*next_val, *val) != Ordering::Equal) {
+      break;
+    }
+    // unless it is set-cookie, in which case we don't
+    if (header_compare(*val, "set-cookie") == Ordering::Equal) {
+      break;
+    }
+    str = JS_ConcatStrings(cx, str, comma);
+    JS::RootedString next_str(
+        cx, JS_NewStringCopyN(cx, reinterpret_cast<char *>(next_val->ptr.get()), next_val->len));
+    str = JS_ConcatStrings(cx, str, next_str);
+    *index = *index + 1;
   }
-  return JS_NewStringCopyN(cx, reinterpret_cast<char *>(val->ptr.get()), val->len);
+  return str;
 }
 
 size_t Headers::sorted_idx(JSContext *cx, JS::HandleObject self, size_t index) {
@@ -1033,14 +1035,16 @@ size_t Headers::sorted_idx(JSContext *cx, JS::HandleObject self, size_t index) {
       JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersSortList)).toPrivate());
   MOZ_ASSERT(headers_sort_list);
 
-  HeadersList *headers_list = static_cast<Headers::HeadersList *>(
+  const HeadersList *headers_list = static_cast<Headers::HeadersList *>(
       JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
   MOZ_ASSERT(headers_list);
 
-  // Empty length means we need to recompute
+  // Empty length means we need to recompute.
   if (headers_sort_list->size() == 0) {
-    // lowercase sort
-    MOZ_ASSERT_UNREACHABLE("TODO HEADERS LIST SORT");
+    headers_sort_list->resize(headers_list->size());
+    std::iota(headers_sort_list->begin(), headers_sort_list->end(), 0);
+    std::sort(headers_sort_list->begin(), headers_sort_list->end(),
+              HeadersSortListCompare(headers_list));
   }
 
   MOZ_ASSERT(headers_sort_list->size() == headers_list->size());
@@ -1068,16 +1072,13 @@ bool HeadersIterator::next(JSContext *cx, unsigned argc, Value *vp) {
     return true;
   }
 
-  // map the index to the sorted index position
-  index = Headers::sorted_idx(cx, headers, index);
-
   JS_DefineProperty(cx, result, "done", false, JSPROP_ENUMERATE);
 
   JS::RootedValue key_val(cx);
   JS::RootedValue val_val(cx);
 
   if (type != ITER_TYPE_VALUES) {
-    host_api::HostString *key = &std::get<0>(list->at(index));
+    host_api::HostString *key = &std::get<0>(list->at(Headers::sorted_idx(cx, headers, index)));
     JS::RootedString str(cx,
                          JS_NewStringCopyN(cx, reinterpret_cast<char *>(key->ptr.get()), key->len));
     if (!str)
@@ -1086,7 +1087,12 @@ bool HeadersIterator::next(JSContext *cx, unsigned argc, Value *vp) {
   }
 
   if (type != ITER_TYPE_KEYS) {
-    JS::RootedString str(cx, Headers::get_combined_value(cx, headers, false, index));
+    size_t start_index = index;
+    JS::RootedString str(cx, Headers::get_combined_value(cx, headers, &index));
+    // combining can alter the cursor
+    if (index != start_index) {
+      JS::SetReservedSlot(self, Slots::Cursor, JS::Int32Value(index));
+    }
     if (!str)
       return false;
     val_val = JS::StringValue(str);

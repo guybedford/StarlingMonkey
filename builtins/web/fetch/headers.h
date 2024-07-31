@@ -59,12 +59,14 @@ public:
     Uninitialized,   // Headers have not been initialized.
   };
 
-  // Headers internal data structure is a list of key-value pairs, ready to go as owned host
-  // strings.
+  // Headers internal data structure is a list of key-value pairs, ready to go on the wire as
+  // owned host strings.
   using HeadersList = std::vector<std::tuple<host_api::HostString, host_api::HostString>>;
   // A sort list is maintained of ordered indicies of the the sorted lowercase keys of main headers
   // list, with each index of HeadersList always being present in this list once and only once. When
-  // this list is empty, that means the sort list is not valid and needs to be computed.
+  // this list is empty, that means the sort list is not valid and needs to be computed. For example,
+  // it is cleared after an insertion. It is always computed for every lookup, to ensure a fast
+  // lookup.
   using HeadersSortList = std::vector<size_t>;
 
   enum class Slots {
@@ -97,11 +99,10 @@ public:
 
   /// Get the true header index at the given sorted list position.
   /// Ensuring that HeadersSortList is recomputed if necessary in the process.
-  static size_t sorted_idx(JSContext *cx, JS::HandleObject self, size_t index);
+  static size_t sorted_idx(JSContext *cx, JS::HandleObject self, size_t idx);
 
   /// Get the possibly comma-joined value for a given header key
-  static JSString *get_combined_value(JSContext *cx, JS::HandleObject self, bool is_set_cookie,
-                                      size_t index);
+  static JS::HandleString get_combined_value(JSContext *cx, JS::HandleObject self, size_t *index);
 
   static Mode mode(JSObject *self) {
     MOZ_ASSERT(Headers::is_instance(self));

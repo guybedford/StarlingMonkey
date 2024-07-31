@@ -376,16 +376,16 @@ static std::vector forbidden_response_headers = {
     "host",
 };
 
-std::list<string_view> HttpHeaders::get_forbidden_request_headers() {
-  std::list<string_view> list;
+std::vector<string_view> HttpHeaders::get_forbidden_request_headers() {
+  std::vector<string_view> list;
   for (auto it = forbidden_request_headers.begin(); it != forbidden_request_headers.end(); ++it) {
     list.push_back(*it);
   }
   return list;
 }
 
-std::list<string_view> HttpHeaders::get_forbidden_response_headers() {
-  std::list<string_view> list;
+std::vector<string_view> HttpHeaders::get_forbidden_response_headers() {
+  std::vector<string_view> list;
   for (auto it = forbidden_response_headers.begin(); it != forbidden_response_headers.end(); ++it) {
     list.push_back(*it);
   }

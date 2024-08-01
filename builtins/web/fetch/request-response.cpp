@@ -369,8 +369,7 @@ bool RequestOrResponse::extract_body(JSContext *cx, JS::HandleObject self,
     if (!source) {
       return false;
     }
-    RootedObject body_stream(cx, JS::NewReadableDefaultStreamObject(cx, source,
-                             nullptr, 0.0));
+    RootedObject body_stream(cx, JS::NewReadableDefaultStreamObject(cx, source, nullptr, 0.0));
     if (!body_stream) {
       return false;
     }
@@ -379,13 +378,11 @@ bool RequestOrResponse::extract_body(JSContext *cx, JS::HandleObject self,
     MOZ_ASSERT(ReadableStreamIsDisturbed(cx, body_stream, &disturbed));
     MOZ_ASSERT(!disturbed);
 
-    if (!ReadableStreamEnqueue(cx, body_stream, chunk) ||
-        !ReadableStreamClose(cx, body_stream)) {
+    if (!ReadableStreamEnqueue(cx, body_stream, chunk) || !ReadableStreamClose(cx, body_stream)) {
       return false;
     }
 
-    JS_SetReservedSlot(self, static_cast<uint32_t>(Slots::BodyStream),
-                       ObjectValue(*body_stream));
+    JS_SetReservedSlot(self, static_cast<uint32_t>(Slots::BodyStream), ObjectValue(*body_stream));
     content_length.emplace(length);
   }
 
@@ -397,13 +394,14 @@ bool RequestOrResponse::extract_body(JSContext *cx, JS::HandleObject self,
 
     if (content_length.isSome()) {
       auto length_str = std::to_string(content_length.value());
-      if (!Headers::set_if_undefined(cx, headers, "content-length", length_str)) {
+      if (!Headers::set_valid_if_undefined(cx, headers, "content-length", length_str)) {
         return false;
       }
     }
 
     // Step 36.3 of Request constructor / 8.4 of Response constructor.
-    if (content_type && !Headers::set_if_undefined(cx, headers, "content-type", content_type)) {
+    if (content_type &&
+        !Headers::set_valid_if_undefined(cx, headers, "content-type", content_type)) {
       return false;
     }
   }
@@ -417,8 +415,9 @@ JSObject *RequestOrResponse::maybe_headers(JSObject *obj) {
   return JS::GetReservedSlot(obj, static_cast<uint32_t>(Slots::Headers)).toObjectOrNull();
 }
 
-unique_ptr<host_api::HttpHeaders> RequestOrResponse::headers_handle_clone(JSContext* cx,
-  HandleObject self, Headers::HeadersGuard guard) {
+unique_ptr<host_api::HttpHeaders>
+RequestOrResponse::headers_handle_clone(JSContext *cx, HandleObject self,
+                                        Headers::HeadersGuard guard) {
   MOZ_ASSERT(is_instance(self));
 
   RootedObject headers(cx, maybe_headers(self));
@@ -441,7 +440,7 @@ unique_ptr<host_api::HttpHeaders> RequestOrResponse::headers_handle_clone(JSCont
   return clone_handle;
 }
 
-bool finish_outgoing_body_streaming(JSContext* cx, HandleObject body_owner) {
+bool finish_outgoing_body_streaming(JSContext *cx, HandleObject body_owner) {
   // If no `body_owner` was passed, that means we sent a response: those aren't always
   // reified during `respondWith` processing, and we don't need the instance here.
   // That means, if we don't have the `body_owner`, we can advance the FetchState to
@@ -499,9 +498,8 @@ bool RequestOrResponse::append_body(JSContext *cx, JS::HandleObject self, JS::Ha
 JSObject *RequestOrResponse::headers(JSContext *cx, JS::HandleObject obj) {
   JSObject *headers = maybe_headers(obj);
   if (!headers) {
-    Headers::HeadersGuard guard = Request::is_instance(obj)
-      ? Headers::HeadersGuard::Request
-      : Headers::HeadersGuard::Response;
+    Headers::HeadersGuard guard = Request::is_instance(obj) ? Headers::HeadersGuard::Request
+                                                            : Headers::HeadersGuard::Response;
     host_api::HttpHeadersReadOnly *handle;
     if (is_incoming(obj) && (handle = headers_handle(obj))) {
       headers = Headers::create(cx, handle, guard);
@@ -968,7 +966,6 @@ bool reader_for_outgoing_body_then_handler(JSContext *cx, JS::HandleObject body_
     return false;
   }
 
-
   // Read the next chunk.
   JS::RootedObject promise(cx, JS::ReadableStreamDefaultReaderRead(cx, reader));
   if (!promise) {
@@ -993,7 +990,7 @@ bool reader_for_outgoing_body_catch_handler(JSContext *cx, JS::HandleObject body
 }
 
 bool RequestOrResponse::maybe_stream_body(JSContext *cx, JS::HandleObject body_owner,
-                                          host_api::HttpOutgoingBodyOwner* destination,
+                                          host_api::HttpOutgoingBodyOwner *destination,
                                           bool *requires_streaming) {
   *requires_streaming = false;
   if (!has_body(body_owner)) {
@@ -1055,13 +1052,15 @@ bool RequestOrResponse::maybe_stream_body(JSContext *cx, JS::HandleObject body_o
   // perform another operation in this way.
   JS::RootedObject catch_handler(cx);
   JS::RootedValue extra(cx, JS::ObjectValue(*reader));
-  catch_handler = create_internal_method<reader_for_outgoing_body_catch_handler>(cx, body_owner, extra);
+  catch_handler =
+      create_internal_method<reader_for_outgoing_body_catch_handler>(cx, body_owner, extra);
   if (!catch_handler)
     return false;
 
   JS::RootedObject then_handler(cx);
   extra.setObject(*catch_handler);
-  then_handler = create_internal_method<reader_for_outgoing_body_then_handler>(cx, body_owner, extra);
+  then_handler =
+      create_internal_method<reader_for_outgoing_body_then_handler>(cx, body_owner, extra);
   if (!then_handler)
     return false;
 
@@ -1214,15 +1213,13 @@ bool Request::clone(JSContext *cx, unsigned argc, JS::Value *vp) {
   RootedObject headers(cx, RequestOrResponse::maybe_headers(self));
   if (headers) {
     RootedValue headers_val(cx, ObjectValue(*headers));
-    JSObject *cloned_headers =
-        Headers::create(cx, headers_val, Headers::HeadersGuard::Request);
+    JSObject *cloned_headers = Headers::create(cx, headers_val, Headers::HeadersGuard::Request);
     if (!cloned_headers) {
       return false;
     }
     cloned_headers_val.set(ObjectValue(*cloned_headers));
   } else if (RequestOrResponse::handle(self)) {
-    auto handle =
-        RequestOrResponse::headers_handle_clone(cx, self, Headers::HeadersGuard::Request);
+    auto handle = RequestOrResponse::headers_handle_clone(cx, self, Headers::HeadersGuard::Request);
     JSObject *cloned_headers =
         Headers::create(cx, handle.release(), Headers::HeadersGuard::Request);
     if (!cloned_headers) {
@@ -1315,7 +1312,8 @@ bool Request::init_class(JSContext *cx, JS::HandleObject global) {
 }
 
 void Request::init_slots(JSObject *requestInstance) {
-  JS::SetReservedSlot(requestInstance, static_cast<uint32_t>(Slots::Request), JS::PrivateValue(nullptr));
+  JS::SetReservedSlot(requestInstance, static_cast<uint32_t>(Slots::Request),
+                      JS::PrivateValue(nullptr));
   JS::SetReservedSlot(requestInstance, static_cast<uint32_t>(Slots::Headers), JS::NullValue());
   JS::SetReservedSlot(requestInstance, static_cast<uint32_t>(Slots::BodyStream), JS::NullValue());
   JS::SetReservedSlot(requestInstance, static_cast<uint32_t>(Slots::HasBody), JS::FalseValue());
@@ -2046,15 +2044,17 @@ bool Response::redirect(JSContext *cx, unsigned argc, Value *vp) {
     return false;
   }
 
-   // 1. Let parsedURL be the result of parsing url with current settings object’s API base
-   // URL.
+  // 1. Let parsedURL be the result of parsing url with current settings object’s API base
+  // URL.
   jsurl::SpecString url_str = core::encode(cx, args.get(0));
   if (!url_str.data) {
     return false;
   }
-  auto parsedURL = new_jsurl_with_base(&url_str, url::URL::url(worker_location::WorkerLocation::url));
+  auto parsedURL =
+      new_jsurl_with_base(&url_str, url::URL::url(worker_location::WorkerLocation::url));
   if (!parsedURL) {
-    return api::throw_error(cx, api::Errors::TypeError, "Response.redirect", "url", "be a valid URL");
+    return api::throw_error(cx, api::Errors::TypeError, "Response.redirect", "url",
+                            "be a valid URL");
   }
 
   // 3. If status is not a redirect status, then throw a RangeError.
@@ -2062,26 +2062,26 @@ bool Response::redirect(JSContext *cx, unsigned argc, Value *vp) {
   auto statusVal = args.get(1);
   uint16_t status;
   if (statusVal.isUndefined()) {
-   status = 302;
+    status = 302;
   } else {
-   if (!ToUint16(cx, statusVal, &status)) {
-     return false;
-   }
+    if (!ToUint16(cx, statusVal, &status)) {
+      return false;
+    }
   }
   if (status != 301 && status != 302 && status != 303 && status != 307 && status != 308) {
     auto status_str = std::to_string(status);
     return api::throw_error(cx, FetchErrors::InvalidStatus, "Response.redirect",
-      status_str.c_str());
+                            status_str.c_str());
   }
 
-   // 4. Let responseObject be the result of creating a Response object, given a new response,
-   // "immutable", and this’s relevant Realm.
+  // 4. Let responseObject be the result of creating a Response object, given a new response,
+  // "immutable", and this’s relevant Realm.
   RootedObject responseObject(cx, create(cx));
   if (!responseObject) {
     return false;
   }
 
-   // 5. Set responseObject’s response’s status to status.
+  // 5. Set responseObject’s response’s status to status.
   SetReservedSlot(responseObject, static_cast<uint32_t>(Slots::Status), JS::Int32Value(status));
   SetReservedSlot(responseObject, static_cast<uint32_t>(Slots::StatusMessage),
                   JS::StringValue(JS_GetEmptyString(cx)));
@@ -2092,7 +2092,7 @@ bool Response::redirect(JSContext *cx, unsigned argc, Value *vp) {
   if (!headers) {
     return false;
   }
-  if (!Headers::set_if_undefined(cx, headers, "location", url_str)) {
+  if (!Headers::set_valid_if_undefined(cx, headers, "location", url_str)) {
     return false;
   }
 
@@ -2129,7 +2129,8 @@ bool Response::redirect(JSContext *cx, unsigned argc, Value *vp) {
 //     return false;
 //   }
 //   if (!callbackCalled) {
-//     return api::throw_error(cx, api::Errors::WrongType, "Response.json", "data", "be a valid JSON value");
+//     return api::throw_error(cx, api::Errors::WrongType, "Response.json", "data", "be a valid JSON
+//     value");
 //   }
 //   // 2. Let body be the result of extracting bytes.
 
@@ -2327,7 +2328,8 @@ bool Response::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
   // `throw` a ``RangeError``.
   if (status < 200 || status > 599) {
     auto status_str = std::to_string(status);
-    return api::throw_error(cx, FetchErrors::InvalidStatus, "Response constructor", status_str.c_str());
+    return api::throw_error(cx, FetchErrors::InvalidStatus, "Response constructor",
+                            status_str.c_str());
   }
 
   // 2.  If `init`["statusText"] does not match the `reason-phrase` token
@@ -2383,7 +2385,7 @@ bool Response::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
     if (status == 204 || status == 205 || status == 304) {
       auto status_str = std::to_string(status);
       return api::throw_error(cx, FetchErrors::NonBodyResponseWithBody, "Response constructor",
-        status_str.c_str());
+                              status_str.c_str());
     }
 
     //     2.  Let `Content-Type` be null.
@@ -2415,7 +2417,7 @@ bool Response::init_class(JSContext *cx, JS::HandleObject global) {
          (type_error_atom = JS_AtomizeAndPinString(cx, "error"));
 }
 
-JSObject *Response::create(JSContext *cx){
+JSObject *Response::create(JSContext *cx) {
   RootedObject self(cx, JS_NewObjectWithGivenProto(cx, &class_, proto_obj));
   if (!self) {
     return nullptr;
@@ -2437,7 +2439,7 @@ JSObject *Response::init_slots(HandleObject response) {
   return response;
 }
 
-JSObject * Response::create_incoming(JSContext *cx, host_api::HttpIncomingResponse *response) {
+JSObject *Response::create_incoming(JSContext *cx, host_api::HttpIncomingResponse *response) {
   RootedObject self(cx, create(cx));
   if (!self) {
     return nullptr;

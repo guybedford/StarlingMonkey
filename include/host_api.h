@@ -2,13 +2,13 @@
 #define JS_RUNTIME_HOST_API_H
 
 #include <cstdint>
+#include <list>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
-#include <list>
 
 #include "../crates/rust-url/rust-url.h"
 #include "extension-api.h"
@@ -127,10 +127,10 @@ struct HostString final {
   iterator begin() { return this->ptr.get(); }
   iterator end() { return this->begin() + this->len; }
 
-  HostString copy() {
+  static HostString from_copy(string_view str) {
     JS::UniqueChars ptr(
-        static_cast<char *>(std::memcpy(malloc(this->len), this->ptr.get(), this->len)));
-    return HostString(std::move(ptr), this->len);
+        static_cast<char *>(std::memcpy(malloc(str.size()), str.data(), str.size())));
+    return HostString(std::move(ptr), str.size());
   }
 
   const_iterator begin() const { return this->ptr.get(); }

@@ -63,10 +63,10 @@ public:
   // owned host strings.
   using HeadersList = std::vector<std::tuple<host_api::HostString, host_api::HostString>>;
   // A sort list is maintained of ordered indicies of the the sorted lowercase keys of main headers
-  // list, with each index of HeadersList always being present in this list once and only once. When
-  // this list is empty, that means the sort list is not valid and needs to be computed. For example,
-  // it is cleared after an insertion. It is always computed for every lookup, to ensure a fast
-  // lookup.
+  // list, with each index of HeadersList always being present in this list once and only once.
+  // All lookups are done as indices in this list, which then map to indices in HeadersList.
+  // When this list is empty, that means the sort list is not valid and needs to be computed. For
+  // example, it is cleared after an insertion. It is recomputed lazily for every lookup.
   using HeadersSortList = std::vector<size_t>;
 
   enum class Slots {
@@ -88,8 +88,8 @@ public:
    * Adds the given header name/value to `self`'s list of headers iff `self`
    * doesn't already contain a header with that name.
    */
-  static bool set_if_undefined(JSContext *cx, JS::HandleObject self, string_view name,
-                               string_view value);
+  static bool set_valid_if_undefined(JSContext *cx, JS::HandleObject self, string_view name,
+                                     string_view value);
 
   /// Appends a value for a header name.
   //
@@ -97,9 +97,14 @@ public:
   static bool append_header_value(JSContext *cx, JS::HandleObject self, JS::HandleValue name,
                                   JS::HandleValue value, const char *fun_name);
 
-  /// Get the true header index at the given sorted list position.
-  /// Ensuring that HeadersSortList is recomputed if necessary in the process.
-  static size_t sorted_idx(JSContext *cx, JS::HandleObject self, size_t idx);
+  /// Lookup the given header key, returning the sorted header index.
+  /// This index is guaranteed to be valid, so long as mutations are not made.
+  static std::optional<size_t> lookup(JSContext *cx, JS::HandleObject self, string_view key);
+
+  /// Get the header entry for a given index, ensuring that HeadersSortList is recomputed if
+  /// necessary in the process.
+  static const std::tuple<host_api::HostString, host_api::HostString> *
+  get_index(JSContext *cx, JS::HandleObject self, size_t idx);
 
   /// Get the possibly comma-joined value for a given header key
   static JS::HandleString get_combined_value(JSContext *cx, JS::HandleObject self, size_t *index);

@@ -333,6 +333,7 @@ static bool switch_mode(JSContext *cx, HandleObject self, const Headers::Mode mo
 
   if (current_mode == Headers::Mode::Uninitialized) {
     MOZ_ASSERT(mode == Headers::Mode::ContentOnly);
+    fprintf(stderr, "UNINITIALIZED -> CONTENT ONLY");
     RootedObject map(cx, JS::NewMapObject(cx));
     if (!map) {
       return false;
@@ -341,21 +342,23 @@ static bool switch_mode(JSContext *cx, HandleObject self, const Headers::Mode mo
                    JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList))
                        .toPrivate()) == nullptr);
     SetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList),
-                    JS::PrivateValue(new Headers::HeadersList()));
+                    PrivateValue(new Headers::HeadersList()));
     MOZ_ASSERT(static_cast<std::vector<size_t> *>(
                    JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersSortList))
                        .toPrivate()) == nullptr);
     SetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersSortList),
-                    JS::PrivateValue(new std::vector<size_t>()));
+                    PrivateValue(new std::vector<size_t>()));
     SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Mode),
                     JS::Int32Value(static_cast<int32_t>(Headers::Mode::ContentOnly)));
     return true;
   }
 
   if (current_mode == Headers::Mode::ContentOnly) {
+    fprintf(stderr, "CONTENT ONLY -> CACHED IN CONTENT");
     MOZ_ASSERT(mode == Headers::Mode::CachedInContent,
                "Switching from ContentOnly to HostOnly is wasteful and not implemented");
-    Headers::HeadersList *list = Headers::get_list(cx, self);
+    Headers::HeadersList *list = static_cast<Headers::HeadersList *>(
+        GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
     MOZ_ASSERT(list);
 
     auto handle = host_api::HttpHeaders::FromEntries(*list);
@@ -369,9 +372,20 @@ static bool switch_mode(JSContext *cx, HandleObject self, const Headers::Mode mo
   // Regardless of whether we're switching to CachedInContent or ContentOnly,
   // get all entries into content.
   if (current_mode == Headers::Mode::HostOnly) {
-    auto *list = static_cast<Headers::HeadersList *>(
-        JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
-
+    fprintf(stderr, "HOST ONLY -> CACHED IN CONTENT");
+    MOZ_ASSERT(mode == Headers::Mode::CachedInContent);
+    MOZ_ASSERT(static_cast<Headers::HeadersList *>(
+                   JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList))
+                       .toPrivate()) == nullptr);
+    Headers::HeadersList *list = new Headers::HeadersList();
+    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList), PrivateValue(list));
+    MOZ_ASSERT(static_cast<std::vector<size_t> *>(
+                   JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersSortList))
+                       .toPrivate()) == nullptr);
+    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersSortList),
+                    PrivateValue(new std::vector<size_t>()));
+    SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Mode),
+                    JS::Int32Value(static_cast<int32_t>(Headers::Mode::ContentOnly)));
     auto handle = get_handle(self);
     MOZ_ASSERT(handle);
     auto res = handle->entries();
@@ -386,6 +400,8 @@ static bool switch_mode(JSContext *cx, HandleObject self, const Headers::Mode mo
   }
 
   if (mode == Headers::Mode::ContentOnly) {
+    fprintf(stderr, "CACHED IN CONTENT -> CONTENT ONLY");
+    MOZ_ASSERT(current_mode == Headers::Mode::CachedInContent);
     auto handle = get_handle(self);
     delete handle;
     SetReservedSlot(self, static_cast<size_t>(Headers::Slots::Handle), PrivateValue(nullptr));
@@ -491,9 +507,8 @@ JSObject *Headers::create(JSContext *cx, HeadersGuard guard) {
   SetReservedSlot(self, static_cast<uint32_t>(Slots::Mode),
                   JS::Int32Value(static_cast<int32_t>(Mode::Uninitialized)));
 
-  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersList), JS::PrivateValue(nullptr));
-  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersSortList), JS::PrivateValue(nullptr));
-
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersList), PrivateValue(nullptr));
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersSortList), PrivateValue(nullptr));
   return self;
 }
 
@@ -716,13 +731,18 @@ bool Headers::delete_(JSContext *cx, unsigned argc, JS::Value *vp) {
       MOZ_ASSERT(headers_list);
 
       // Delete all case-insensitively equal names.
-      // Each deletion will naturally shift the next sorted same name into index, with the
-      // deletions retaining the integrity of both headers_list and headers_sort_list.
+      // The ordering guarantee for sort_list is that equal names will come later in headers_list
+      // so that we can continue to use sort list during the delete operation, only recomputing it
+      // after.
+      size_t delete_cnt = 0;
       do {
-        headers_list->erase(headers_list->begin() + headers_sort_list->at(index));
-        headers_sort_list->erase(headers_sort_list->begin() + index);
-      } while (header_compare(std::get<0>(headers_list->at(headers_sort_list->at(index))),
+        headers_list->erase(headers_list->begin() + headers_sort_list->at(index + delete_cnt) -
+                            delete_cnt);
+        delete_cnt++;
+      } while (header_compare(std::get<0>(headers_list->at(
+                                  headers_sort_list->at(index + delete_cnt) - delete_cnt)),
                               name_chars) == Ordering::Equal);
+      headers_sort_list->clear();
     }
   }
 
@@ -765,12 +785,11 @@ bool Headers::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
   }
   SetReservedSlot(self, static_cast<uint32_t>(Slots::Guard),
                   JS::Int32Value(static_cast<int32_t>(HeadersGuard::None)));
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersList), PrivateValue(nullptr));
+  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersSortList), PrivateValue(nullptr));
   if (!init_entries(cx, self, headersInit)) {
     return false;
   }
-
-  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersList), JS::PrivateValue(nullptr));
-  SetReservedSlot(self, static_cast<uint32_t>(Slots::HeadersSortList), JS::PrivateValue(nullptr));
 
   args.rval().setObject(*self);
   return true;
@@ -816,7 +835,6 @@ Headers::HeadersList *Headers::get_list(JSContext *cx, HandleObject self) {
   if (mode(self) == Mode::HostOnly && !switch_mode(cx, self, Mode::CachedInContent)) {
     return nullptr;
   }
-
   return static_cast<HeadersList *>(
       GetReservedSlot(self, static_cast<size_t>(Slots::HeadersList)).toPrivate());
 }
@@ -953,17 +971,19 @@ JS::HandleString Headers::get_combined_value(JSContext *cx, JS::HandleObject sel
   HeadersList *headers_list = static_cast<Headers::HeadersList *>(
       JS::GetReservedSlot(self, static_cast<size_t>(Headers::Slots::HeadersList)).toPrivate());
   MOZ_ASSERT(headers_list);
+  const host_api::HostString *key = &std::get<0>(*Headers::get_index(cx, self, *index));
   const host_api::HostString *val = &std::get<1>(*Headers::get_index(cx, self, *index));
   // check if we need to join with the next value if it is the same key, comma-separated
   JS::RootedString str(cx,
                        JS_NewStringCopyN(cx, reinterpret_cast<char *>(val->ptr.get()), val->len));
   while (*index + 1 < headers_list->size()) {
+    const host_api::HostString *next_key = &std::get<0>(*Headers::get_index(cx, self, *index + 1));
     const host_api::HostString *next_val = &std::get<1>(*Headers::get_index(cx, self, *index + 1));
-    if (header_compare(*next_val, *val) != Ordering::Equal) {
+    if (header_compare(*next_key, *key) != Ordering::Equal) {
       break;
     }
     // unless it is set-cookie, in which case we don't
-    if (header_compare(*val, "set-cookie") == Ordering::Equal) {
+    if (header_compare(*key, "set-cookie") == Ordering::Equal) {
       break;
     }
     str = JS_ConcatStrings(cx, str, comma);

@@ -27,7 +27,7 @@ if [ -z "$test_component" ]; then
 
    # Run Wizer
    set +e
-   "$test_runtime/componentize.sh" $componentize_flags "$test_dir/$test_name.js" "$test_component" 1> "$stdout_log" 2> "$stderr_log"
+   PREOPEN_DIR="$(dirname $(dirname "$test_dir"))" "$test_runtime/componentize.sh" $componentize_flags "$test_dir/$test_name.js" "$test_component" 1> "$stdout_log" 2> "$stderr_log"
    wizer_result=$?
    set -e
 
@@ -98,7 +98,7 @@ fi
 
 port=$(cat "$stderr_log" | head -n 1 | tail -c 7 | head -c 5)
 
-status_code=$(curl --write-out %{http_code} --silent -D "$headers_log" --output "$body_log" "http://localhost:$port/$test_serve_path")
+status_code=$(curl -A "test-agent" -H "eXample-hEader: Header Value" --write-out %{http_code} --silent -D "$headers_log" --output "$body_log" "http://localhost:$port/$test_serve_path")
 
 if [ ! "$status_code" = "$test_serve_status_expectation" ]; then
    echo "Bad status code $status_code, expected $test_serve_status_expectation"

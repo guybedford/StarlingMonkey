@@ -84,9 +84,6 @@ if [[ $aot -ne 0 ]]; then
          -o "$OUT_FILE" \
          -i "$(dirname "$0")/starling.wasm"
 else
-    echo $wizer --allow-wasi --wasm-bulk-memory true \
-         --inherit-stdio true --inherit-env true $preopen_dir -o "$OUT_FILE" \
-         -- "$(dirname "$0")/starling.wasm"
     echo "$IN_FILE" | WASMTIME_BACKTRACE_DETAILS=1 $wizer --allow-wasi --wasm-bulk-memory true \
          --inherit-stdio true --inherit-env true $preopen_dir -o "$OUT_FILE" \
          -- "$(dirname "$0")/starling.wasm"

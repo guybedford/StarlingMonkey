@@ -415,9 +415,8 @@ JSObject *RequestOrResponse::maybe_headers(JSObject *obj) {
   return JS::GetReservedSlot(obj, static_cast<uint32_t>(Slots::Headers)).toObjectOrNull();
 }
 
-unique_ptr<host_api::HttpHeaders>
-RequestOrResponse::headers_handle_clone(JSContext *cx, HandleObject self,
-                                        Headers::HeadersGuard guard) {
+unique_ptr<host_api::HttpHeaders> RequestOrResponse::headers_handle_clone(JSContext *cx,
+                                                                          HandleObject self) {
   MOZ_ASSERT(is_instance(self));
 
   RootedObject headers(cx, maybe_headers(self));
@@ -435,9 +434,7 @@ RequestOrResponse::headers_handle_clone(JSContext *cx, HandleObject self,
     HANDLE_ERROR(cx, *err);
     return nullptr;
   }
-  auto clone_handle = unique_ptr<host_api::HttpHeaders>(res.unwrap()->clone());
-  Headers::guard_filter(*clone_handle, guard);
-  return clone_handle;
+  return unique_ptr<host_api::HttpHeaders>(res.unwrap()->clone());
 }
 
 bool finish_outgoing_body_streaming(JSContext *cx, HandleObject body_owner) {
@@ -498,8 +495,11 @@ bool RequestOrResponse::append_body(JSContext *cx, JS::HandleObject self, JS::Ha
 JSObject *RequestOrResponse::headers(JSContext *cx, JS::HandleObject obj) {
   JSObject *headers = maybe_headers(obj);
   if (!headers) {
-    Headers::HeadersGuard guard = Request::is_instance(obj) ? Headers::HeadersGuard::Request
-                                                            : Headers::HeadersGuard::Response;
+    // Incoming request and incoming response headers are immutable per service worker
+    // and fetch specs respectively.
+    Headers::HeadersGuard guard = is_incoming(obj)            ? Headers::HeadersGuard::Immutable
+                                  : Request::is_instance(obj) ? Headers::HeadersGuard::Request
+                                                              : Headers::HeadersGuard::Response;
     host_api::HttpHeadersReadOnly *handle;
     if (is_incoming(obj) && (handle = headers_handle(obj))) {
       headers = Headers::create(cx, handle, guard);
@@ -1213,15 +1213,17 @@ bool Request::clone(JSContext *cx, unsigned argc, JS::Value *vp) {
   RootedObject headers(cx, RequestOrResponse::maybe_headers(self));
   if (headers) {
     RootedValue headers_val(cx, ObjectValue(*headers));
-    JSObject *cloned_headers = Headers::create(cx, headers_val, Headers::HeadersGuard::Request);
+    JSObject *cloned_headers = Headers::create(cx, headers_val, Headers::guard(headers));
     if (!cloned_headers) {
       return false;
     }
     cloned_headers_val.set(ObjectValue(*cloned_headers));
   } else if (RequestOrResponse::handle(self)) {
-    auto handle = RequestOrResponse::headers_handle_clone(cx, self, Headers::HeadersGuard::Request);
+    auto handle = RequestOrResponse::headers_handle_clone(cx, self);
     JSObject *cloned_headers =
-        Headers::create(cx, handle.release(), Headers::HeadersGuard::Request);
+        Headers::create(cx, handle.release(),
+                        RequestOrResponse::is_incoming(self) ? Headers::HeadersGuard::Immutable
+                                                             : Headers::HeadersGuard::Request);
     if (!cloned_headers) {
       return false;
     }
@@ -1330,7 +1332,7 @@ void Request::init_slots(JSObject *requestInstance) {
  * The places where we deviate from the spec are called out inline.
  */
 bool Request::initialize(JSContext *cx, JS::HandleObject request, JS::HandleValue input,
-                         JS::HandleValue init_val) {
+                         JS::HandleValue init_val, Headers::HeadersGuard guard) {
   init_slots(request);
   JS::RootedString url_str(cx);
   JS::RootedString method_str(cx);
@@ -1615,7 +1617,8 @@ bool Request::initialize(JSContext *cx, JS::HandleObject request, JS::HandleValu
     headers_val.setObject(*input_headers);
   }
   if (!headers_val.isUndefined()) {
-    headers = Headers::create(cx, headers_val, Headers::HeadersGuard::Request);
+    // incoming request headers are always immutable
+    headers = Headers::create(cx, headers_val, guard);
     if (!headers) {
       return false;
     }
@@ -1736,7 +1739,7 @@ JSObject *Request::create(JSContext *cx) {
 bool Request::constructor(JSContext *cx, unsigned argc, JS::Value *vp) {
   CTOR_HEADER("Request", 1);
   JS::RootedObject request(cx, JS_NewObjectForConstructor(cx, &class_, args));
-  if (!request || !initialize(cx, request, args[0], args.get(1))) {
+  if (!request || !initialize(cx, request, args[0], args.get(1), Headers::HeadersGuard::Request)) {
     return false;
   }
 
@@ -2088,6 +2091,7 @@ bool Response::redirect(JSContext *cx, unsigned argc, Value *vp) {
 
   // 6. Let value be parsedURL, serialized and isomorphic encoded.
   // 7. Append (`Location`, value) to responseObject’s response’s header list.
+  // TODO: redirect response headers should be immutable
   RootedObject headers(cx, RequestOrResponse::headers(cx, responseObject));
   if (!headers) {
     return false;

@@ -167,8 +167,7 @@ bool send_response(host_api::HttpOutgoingResponse *response, JS::HandleObject se
 
 bool start_response(JSContext *cx, JS::HandleObject response_obj) {
   auto status = Response::status(response_obj);
-  auto headers =
-      RequestOrResponse::headers_handle_clone(cx, response_obj, Headers::HeadersGuard::Response);
+  auto headers = RequestOrResponse::headers_handle_clone(cx, response_obj);
   if (!headers) {
     return false;
   }

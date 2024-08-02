@@ -1,7 +1,9 @@
 HTTP/1.1 200 OK
-set-cookie: A
-Another: A
-set-cookie: B
-another: B
+example-header: Header Value
+user-agent: test-agent
 content-length: 4
 content-type: text/plain;charset=UTF-8
+set-cookie: A
+set-cookie: B
+another: A
+another: B

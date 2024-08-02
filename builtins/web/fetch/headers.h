@@ -82,12 +82,11 @@ public:
     None,
     Request,
     Response,
+    Immutable,
   };
 
-  /**
-   * Adds the given header name/value to `self`'s list of headers iff `self`
-   * doesn't already contain a header with that name.
-   */
+  /// Adds the valid given header name/value to `self`'s list of headers iff `self`
+  /// doesn't already contain a header with that name.
   static bool set_valid_if_undefined(JSContext *cx, JS::HandleObject self, string_view name,
                                      string_view value);
 
@@ -105,9 +104,6 @@ public:
   /// necessary in the process.
   static const std::tuple<host_api::HostString, host_api::HostString> *
   get_index(JSContext *cx, JS::HandleObject self, size_t idx);
-
-  /// Get the possibly comma-joined value for a given header key
-  static JS::HandleString get_combined_value(JSContext *cx, JS::HandleObject self, size_t *index);
 
   static Mode mode(JSObject *self) {
     MOZ_ASSERT(Headers::is_instance(self));
@@ -144,13 +140,6 @@ public:
   /// Depending on the `Mode` the instance is in, this can be a cache or the canonical store for
   /// the headers.
   static HeadersList *get_list(JSContext *cx, HandleObject self);
-
-  /// Filter the headers based on the provided headers guard, and whatever mode the headers are in.
-  static void guard_filter(JSContext *cx, HandleObject self, HeadersGuard guard);
-  static void guard_filter(host_api::HttpHeaders &handle, HeadersGuard guard);
-
-  /// Check if a specific header name is guarded by the headers guard.
-  static bool check_guard(JSContext *cx, HandleObject self, string_view name);
 
   /**
    * Returns a cloned handle representing the contents of this Headers object.

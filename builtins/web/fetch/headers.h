@@ -90,11 +90,13 @@ public:
   static bool set_valid_if_undefined(JSContext *cx, JS::HandleObject self, string_view name,
                                      string_view value);
 
-  /// Appends a value for a header name.
-  //
   /// Validates and normalizes the name and value.
-  static bool append_header_value(JSContext *cx, JS::HandleObject self, JS::HandleValue name,
-                                  JS::HandleValue value, const char *fun_name);
+  static host_api::HostString validate_header_name(JSContext *cx, HandleValue name_val, bool *err,
+                                                   const char *fun_name);
+  /// Appends a value for a header name.
+  static bool append_valid_header(JSContext *cx, JS::HandleObject self,
+                                  host_api::HostString valid_key, JS::HandleValue value,
+                                  const char *fun_name);
 
   /// Lookup the given header key, returning the sorted header index.
   /// This index is guaranteed to be valid, so long as mutations are not made.
@@ -161,6 +163,7 @@ public:
   enum Slots {
     Type,
     Cursor,
+    Len,
     Headers,
     Count,
   };

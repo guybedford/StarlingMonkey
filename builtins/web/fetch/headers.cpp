@@ -34,7 +34,7 @@ const char VALID_NAME_CHARS[128] = {
 };
 
 #define NORMALIZE_NAME(name, fun_name)                                                             \
-  auto name_chars = validate_header_name(cx, name, fun_name);                                      \
+  auto name_chars = validate_header_name_old(cx, name, fun_name);                                  \
   if (!name_chars) {                                                                               \
     return false;                                                                                  \
   }
@@ -59,7 +59,7 @@ host_api::HttpHeadersReadOnly *get_handle(JSObject *self) {
  * https://searchfox.org/mozilla-central/rev/9f76a47f4aa935b49754c5608a1c8e72ee358c46/netwerk/protocol/http/nsHttp.cpp#172-215
  * For details on validation.
  */
-host_api::HostString validate_header_name(JSContext *cx, HandleValue name_val,
+host_api::HostString validate_header_name_old(JSContext *cx, HandleValue name_val,
                                           const char *fun_name) {
   JS::RootedString name_str(cx, JS::ToString(cx, name_val));
   if (!name_str) {
@@ -552,8 +552,8 @@ JSObject *Headers::create(JSContext *cx, HandleValue init_headers, HeadersGuard 
 
 bool Headers::init_entries(JSContext *cx, HandleObject self, HandleValue initv) {
   bool consumed = false;
-  if (!core::maybe_consume_sequence_or_record_old<append_header_value>(cx, initv, self, &consumed,
-                                                                       "Headers")) {
+  if (!core::maybe_consume_sequence_or_record_old<append_header_value_old>(cx, initv, self,
+                                                                           &consumed, "Headers")) {
     return false;
   }
 
@@ -809,8 +809,8 @@ bool Headers::delete_(JSContext *cx, unsigned argc, JS::Value *vp) {
   return true;
 }
 
-bool Headers::append_header_value(JSContext *cx, JS::HandleObject self, JS::HandleValue name,
-                                  JS::HandleValue value, const char *fun_name) {
+bool Headers::append_header_value_old(JSContext *cx, JS::HandleObject self, JS::HandleValue name,
+                                      JS::HandleValue value, const char *fun_name) {
   NORMALIZE_NAME(name, fun_name)
   NORMALIZE_VALUE(value, fun_name)
 

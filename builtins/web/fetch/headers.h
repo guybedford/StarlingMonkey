@@ -98,6 +98,9 @@ public:
                                   host_api::HostString valid_key, JS::HandleValue value,
                                   const char *fun_name);
 
+  static bool append_header_value_old(JSContext *cx, JS::HandleObject self, JS::HandleValue name,
+                                      JS::HandleValue value, const char *fun_name);
+
   /// Lookup the given header key, returning the sorted header index.
   /// This index is guaranteed to be valid, so long as mutations are not made.
   static std::optional<size_t> lookup(JSContext *cx, JS::HandleObject self, string_view key);

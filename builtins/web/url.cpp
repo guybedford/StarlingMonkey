@@ -164,19 +164,19 @@ jsurl::JSUrlSearchParams *URLSearchParams::get_params(JSObject *self) {
 }
 
 namespace {
-jsurl::SpecString append_impl_validate(JSContext *cx, JS::HandleValue key, bool *err,
-                                       const char *_) {
-  return core::encode_spec_string(cx, key);
-}
-bool append_impl(JSContext *cx, JS::HandleObject self, jsurl::SpecString key, JS::HandleValue val,
+bool append_impl(JSContext *cx, JS::HandleObject self, JS::HandleValue key, JS::HandleValue val,
                  const char *_) {
   const auto params = URLSearchParams::get_params(self);
+
+  auto name = core::encode_spec_string(cx, key);
+  if (!name.data)
+    return false;
 
   auto value = core::encode_spec_string(cx, val);
   if (!value.data)
     return false;
 
-  jsurl::params_append(params, key, value);
+  jsurl::params_append(params, name, value);
   return true;
 }
 } // namespace
@@ -187,9 +187,7 @@ jsurl::SpecSlice URLSearchParams::serialize(JSContext *cx, JS::HandleObject self
 
 bool URLSearchParams::append(JSContext *cx, unsigned argc, JS::Value *vp) {
   METHOD_HEADER(2)
-  bool err = false;
-  auto value = append_impl_validate(cx, args[0], &err, "append");
-  if (!append_impl(cx, self, value, args[1], "append"))
+  if (!append_impl(cx, self, args[0], args[1], "append"))
     return false;
 
   args.rval().setUndefined();
@@ -356,8 +354,8 @@ JSObject *URLSearchParams::create(JSContext *cx, JS::HandleObject self,
 
   bool consumed = false;
   const char *alt_text = ", or a value that can be stringified";
-  if (!core::maybe_consume_sequence_or_record<jsurl::SpecString, append_impl_validate, append_impl>(
-          cx, params_val, self, &consumed, "URLSearchParams", alt_text)) {
+  if (!core::maybe_consume_sequence_or_record<append_impl>(cx, params_val, self, &consumed,
+                                                           "URLSearchParams", alt_text)) {
     return nullptr;
   }
 
@@ -574,7 +572,7 @@ JSObject *URL::create(JSContext *cx, JS::HandleObject self, JS::HandleValue url_
 
 JSObject *URL::create(JSContext *cx, JS::HandleObject self, JS::HandleValue url_val,
                       JS::HandleObject base_obj) {
-  jsurl::JSUrl *base = nullptr;
+  jsurl::JSUrl* base = nullptr;
   if (is_instance(base_obj)) {
     base = static_cast<jsurl::JSUrl *>(JS::GetReservedSlot(base_obj, Slots::Url).toPrivate());
   }

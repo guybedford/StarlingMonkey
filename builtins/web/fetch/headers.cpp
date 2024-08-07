@@ -552,8 +552,8 @@ JSObject *Headers::create(JSContext *cx, HandleValue init_headers, HeadersGuard 
 
 bool Headers::init_entries(JSContext *cx, HandleObject self, HandleValue initv) {
   bool consumed = false;
-  if (!core::maybe_consume_sequence_or_record<append_header_value>(cx, initv, self, &consumed,
-                                                                   "Headers")) {
+  if (!core::maybe_consume_sequence_or_record_old<append_header_value>(cx, initv, self, &consumed,
+                                                                       "Headers")) {
     return false;
   }
 

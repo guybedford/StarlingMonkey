@@ -18,9 +18,9 @@ namespace core {
  * sequence<sequence<Value> or a record<Value, Value>.
  */
 template <auto apply>
-bool maybe_consume_sequence_or_record(JSContext *cx, JS::HandleValue initv, JS::HandleObject target,
-                                      bool *consumed, const char *ctor_name,
-                                      const char *alt_text = "") {
+bool maybe_consume_sequence_or_record_old(JSContext *cx, JS::HandleValue initv,
+                                          JS::HandleObject target, bool *consumed,
+                                          const char *ctor_name, const char *alt_text = "") {
   if (initv.isUndefined()) {
     *consumed = true;
     return true;
@@ -111,6 +111,119 @@ bool maybe_consume_sequence_or_record(JSContext *cx, JS::HandleValue initv, JS::
   return true;
 }
 
+/**
+ * Extract <key,value> pairs from the given value if it is either a
+ * sequence<sequence<Value> or a record<Value, Value>.
+ */
+template <typename T, auto validate, auto apply>
+bool maybe_consume_sequence_or_record(JSContext *cx, JS::HandleValue initv, JS::HandleObject target,
+                                      bool *consumed, const char *ctor_name,
+                                      const char *alt_text = "") {
+  if (initv.isUndefined()) {
+    *consumed = true;
+    return true;
+  }
+
+  JS::RootedValue key(cx);
+  JS::RootedValue value(cx);
+
+  // First, try consuming args[0] as a sequence<sequence<Value>>.
+  JS::ForOfIterator it(cx);
+  if (!it.init(initv, JS::ForOfIterator::AllowNonIterable))
+    return false;
+
+  // Note: this currently doesn't treat strings as iterable even though they
+  // are. We don't have any constructors that want to iterate over strings, and
+  // this makes things a lot easier.
+  if (initv.isObject() && it.valueIsIterable()) {
+    JS::RootedValue entry(cx);
+
+    while (true) {
+      bool done;
+      if (!it.next(&entry, &done))
+        return false;
+
+      if (done)
+        break;
+
+      if (!entry.isObject())
+        return api::throw_error(cx, api::Errors::InvalidSequence, ctor_name, alt_text);
+
+      JS::ForOfIterator entr_iter(cx);
+      if (!entr_iter.init(entry, JS::ForOfIterator::AllowNonIterable))
+        return false;
+
+      if (!entr_iter.valueIsIterable())
+        return api::throw_error(cx, api::Errors::InvalidSequence, ctor_name, alt_text);
+
+      {
+        bool done;
+
+        // Extract key.
+        if (!entr_iter.next(&key, &done))
+          return false;
+        if (done)
+          return api::throw_error(cx, api::Errors::InvalidSequence, ctor_name, alt_text);
+
+        bool err = false;
+        T validated_key = validate(cx, key, &err, ctor_name);
+        if (err)
+          return false;
+
+        // Extract value.
+        if (!entr_iter.next(&value, &done))
+          return false;
+        if (done)
+          return api::throw_error(cx, api::Errors::InvalidSequence, ctor_name, alt_text);
+
+        // Ensure that there aren't any further entries.
+        if (!entr_iter.next(&entry, &done))
+          return false;
+        if (!done)
+          return api::throw_error(cx, api::Errors::InvalidSequence, ctor_name, alt_text);
+
+        if (!apply(cx, target, std::move(validated_key), value, ctor_name))
+          return false;
+      }
+    }
+    *consumed = true;
+  } else if (initv.isObject()) {
+    // init isn't an iterator, so if it's an object, it must be a record to be
+    // valid input, following https://webidl.spec.whatwg.org/#js-record exactly.
+    JS::RootedObject init(cx, &initv.toObject());
+    JS::RootedIdVector ids(cx);
+    if (!js::GetPropertyKeys(cx, init, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS, &ids))
+      return false;
+
+    JS::RootedId curId(cx);
+
+    JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> desc(cx);
+
+    for (size_t i = 0; i < ids.length(); ++i) {
+      curId = ids[i];
+      key = js::IdToValue(curId);
+      if (!JS_GetOwnPropertyDescriptorById(cx, init, curId, &desc))
+        return false;
+      if (desc.isNothing() || !desc->enumerable())
+        continue;
+      // Get call is observable and must come after any value validation
+      bool err = false;
+      T validated_key = validate(cx, key, &err, ctor_name);
+      if (err)
+        return false;
+      if (!JS_GetPropertyById(cx, init, curId, &value))
+        return false;
+      if (!apply(cx, target, std::move(validated_key), value, ctor_name))
+        return false;
+    }
+    *consumed = true;
+  } else {
+    *consumed = false;
+  }
+
+  return true;
 }
+
+} // namespace core
 
 #endif

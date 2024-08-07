@@ -14,9 +14,6 @@
   "Connection is a forbidden request header": {
     "status": "FAIL"
   },
-  "Content-Length is a forbidden request header": {
-    "status": "FAIL"
-  },
   "Cookie is a forbidden request header": {
     "status": "FAIL"
   },

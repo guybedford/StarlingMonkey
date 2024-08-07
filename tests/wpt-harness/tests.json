@@ -65,7 +65,6 @@
   "fetch/api/basic/mode-same-origin.any.js",
   "fetch/api/basic/referrer.any.js",
   "fetch/api/basic/referrer.any.js",
-  "fetch/api/basic/request-forbidden-headers.any.js",
   "fetch/api/basic/request-head.any.js",
   "fetch/api/basic/request-headers-case.any.js",
   "fetch/api/basic/request-headers-nonascii.any.js",

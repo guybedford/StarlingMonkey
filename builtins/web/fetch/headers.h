@@ -9,14 +9,15 @@ namespace web {
 namespace fetch {
 
 class Headers final : public BuiltinImpl<Headers> {
-  static bool get(JSContext *cx, unsigned argc, JS::Value *vp);
-  static bool set(JSContext *cx, unsigned argc, JS::Value *vp);
-  static bool has(JSContext *cx, unsigned argc, JS::Value *vp);
   static bool append(JSContext *cx, unsigned argc, JS::Value *vp);
   static bool delete_(JSContext *cx, unsigned argc, JS::Value *vp);
-  static bool forEach(JSContext *cx, unsigned argc, JS::Value *vp);
   static bool entries(JSContext *cx, unsigned argc, JS::Value *vp);
+  static bool forEach(JSContext *cx, unsigned argc, JS::Value *vp);
+  static bool get(JSContext *cx, unsigned argc, JS::Value *vp);
+  static bool getSetCookie(JSContext *cx, unsigned argc, JS::Value *vp);
+  static bool has(JSContext *cx, unsigned argc, JS::Value *vp);
   static bool keys(JSContext *cx, unsigned argc, JS::Value *vp);
+  static bool set(JSContext *cx, unsigned argc, JS::Value *vp);
   static bool values(JSContext *cx, unsigned argc, JS::Value *vp);
 
 public:
@@ -104,7 +105,7 @@ public:
 
   /// Get the header entry for a given index, ensuring that HeadersSortList is recomputed if
   /// necessary in the process.
-  static const std::tuple<host_api::HostString, host_api::HostString> *
+  static std::tuple<host_api::HostString, host_api::HostString> *
   get_index(JSContext *cx, JS::HandleObject self, size_t idx);
 
   static Mode mode(JSObject *self) {
@@ -163,7 +164,6 @@ public:
   enum Slots {
     Type,
     Cursor,
-    Len,
     Headers,
     Count,
   };

@@ -63,7 +63,8 @@ HostString encode_byte_string(JSContext *cx, JS::HandleValue val) {
     length = JS::GetStringLength(str);
   }
   char *buf = static_cast<char *>(malloc(length));
-  MOZ_ASSERT(JS_EncodeStringToBuffer(cx, str, buf, length));
+  if (!JS_EncodeStringToBuffer(cx, str, buf, length))
+    MOZ_ASSERT_UNREACHABLE();
   return HostString(JS::UniqueChars(buf), length);
 }
 
